@@ -498,20 +498,50 @@ def render_comparison(report: dict) -> None:
     """Render a before/after comparison table."""
     section_header("📊 Before vs After")
 
+    # encoding_repaired is a count of actions, not a before→after value.
+    # We show it as "X repairs performed" rather than a misleading 0.
+    enc = report.get("encoding_repaired", 0)
+    enc_after_label = "0 (repaired)" if enc > 0 else "0"
+
     rows = [
-        ("Rows",                    f"{report['rows_before']:,}",       f"{report['rows_after']:,}"),
-        ("Columns",                 str(report["cols_before"]),          str(report["cols_after"])),
-        ("Duplicate rows removed",  str(report["duplicates_removed"]),  "0"),
-        ("Empty rows removed",      str(report["empty_rows_removed"]),  "0"),
-        ("Missing values filled",   str(report["missing_filled"]),      "0"),
-        ("Empty cols removed",      str(report["empty_cols_removed"]),  "0"),
-        ("Duplicate cols removed",  str(report["dup_cols_removed"]),    "0"),
-        ("Encoding repairs",        str(report["encoding_repaired"]),   "0"),
+        # (Metric,                    Before,                          After)
+        ("Rows",
+         f"{report['rows_before']:,}",
+         f"{report['rows_after']:,}"),
+
+        ("Columns",
+         str(report["cols_before"]),
+         str(report["cols_after"])),
+
+        ("Duplicate rows",
+         str(report["duplicates_removed"]),
+         "0"),
+
+        ("Empty rows",
+         str(report["empty_rows_removed"]),
+         "0"),
+
+        ("Missing values filled",
+         str(report["missing_filled"]),
+         "0"),
+
+        ("Empty columns removed",
+         str(report["empty_cols_removed"]),
+         "0"),
+
+        ("Duplicate columns removed",
+         str(report["dup_cols_removed"]),
+         "0"),
+
+        # Bug fix: show actual repair count; never contradict the summary KPI
+        (f"Encoding repairs (ftfy)",
+         str(enc),
+         enc_after_label),
     ]
 
     table_html = """
     <table class="compare-table">
-        <thead><tr><th>Metric</th><th>Before</th><th>After</th></tr></thead>
+        <thead><tr><th>Metric</th><th>Before / Count</th><th>After / Result</th></tr></thead>
         <tbody>
     """
     for metric, before, after in rows:
