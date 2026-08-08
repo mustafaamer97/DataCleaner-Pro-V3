@@ -2,7 +2,7 @@
 cleaning.py — Core Cleaning Engine for DataCleaner Pro V3.
 
 All cleaning functions are pure (input DataFrame → output DataFrame).
-No Streamlit imports in this module.
+No Streamlit imports anywhere in this module.
 """
 
 from __future__ import annotations
@@ -22,35 +22,39 @@ def _fix_encoding_ftfy(val):
     """
     Repair mojibake using ftfy.
 
-    Returns the fixed string if ftfy changes anything,
-    or the ORIGINAL value (unchanged) if ftfy makes no difference.
-    Returns the original value as-is when ftfy is not installed.
+    Returns the fixed string only when it actually differs from the original.
+    Returns the original value unchanged when:
+      - ftfy makes no difference
+      - ftfy is not installed
+      - val is NaN / None
     """
     if pd.isna(val):
         return val
     original = str(val)
     try:
-        import ftfy
+        import ftfy  # optional dependency
         fixed = ftfy.fix_text(original)
-        # Return fixed only if something actually changed
         return fixed if fixed != original else val
     except Exception:
         return val
 
 
-def _count_encoding_repairs(original_series: pd.Series, fixed_series: pd.Series) -> int:
+def _count_encoding_repairs(
+    original_series: pd.Series,
+    fixed_series:    pd.Series,
+) -> int:
     """
-    Count how many cells were actually changed by encoding repair.
+    Count the number of cells that were actually changed by encoding repair.
 
-    Compares only on non-null string values.
-    NaN cells are never counted as repaired.
+    Rules:
+    - NaN cells on either side are never counted.
+    - Only increments when str(original) != str(fixed).
     """
     count = 0
     for orig, fixed in zip(original_series, fixed_series):
-        # Skip NaN on either side
-        orig_is_na  = orig  is None or (isinstance(orig,  float) and pd.isna(orig))
-        fixed_is_na = fixed is None or (isinstance(fixed, float) and pd.isna(fixed))
-        if orig_is_na or fixed_is_na:
+        orig_na  = orig  is None or (isinstance(orig,  float) and pd.isna(orig))
+        fixed_na = fixed is None or (isinstance(fixed, float) and pd.isna(fixed))
+        if orig_na or fixed_na:
             continue
         if str(orig) != str(fixed):
             count += 1
@@ -60,7 +64,10 @@ def _count_encoding_repairs(original_series: pd.Series, fixed_series: pd.Series)
 # ── Whitespace Trimming ───────────────────────────────────────────────────────
 
 def _trim_spaces(val):
-    """Collapse multiple spaces and strip leading/trailing whitespace."""
+    """
+    Collapse multiple consecutive spaces and strip leading/trailing whitespace.
+    Returns pd.NA for empty / null-like strings.
+    """
     if pd.isna(val):
         return val
     try:
@@ -76,7 +83,10 @@ _VALID_EMAIL = re.compile(r"^[\w._%+\-]+@[\w.\-]+\.[a-zA-Z]{2,}$")
 
 
 def normalize_email(val):
-    """Lowercase and strip an email address. Returns original if invalid."""
+    """
+    Lowercase and strip a valid email address.
+    Returns the original value unchanged if the address does not look valid.
+    """
     if pd.isna(val):
         return val
     cleaned = str(val).strip().lower()
@@ -84,7 +94,7 @@ def normalize_email(val):
 
 
 def get_invalid_emails(series: pd.Series) -> pd.Series:
-    """Return a boolean mask — True where the email appears invalid."""
+    """Return a boolean mask — True where the email value appears invalid."""
     def _is_invalid(val) -> bool:
         if pd.isna(val):
             return False
@@ -96,10 +106,11 @@ def get_invalid_emails(series: pd.Series) -> pd.Series:
 
 def normalize_phone(val):
     """
-    Normalize a phone number:
-    - Remove parentheses, hyphens, extra spaces
-    - Preserve country codes (leading +)
-    - Does NOT assume any country code
+    Normalize a phone number by removing non-digit characters while
+    preserving a leading '+' (country code indicator).
+
+    Does NOT assume or inject any country code.
+    Returns the original value if no digits are found.
     """
     if pd.isna(val):
         return val
@@ -114,30 +125,34 @@ def normalize_phone(val):
 # ── Date Normalization ────────────────────────────────────────────────────────
 
 _DATE_FORMATS = [
-    "%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y",
-    "%Y/%m/%d", "%B %d, %Y", "%b %d, %Y", "%d %B %Y",
-    "%b %d %Y",  # "Feb 3 2024" without comma
+    "%Y-%m-%d",
+    "%d/%m/%Y",
+    "%m/%d/%Y",
+    "%d-%m-%Y",
+    "%Y/%m/%d",
+    "%B %d, %Y",
+    "%b %d, %Y",
+    "%d %B %Y",
+    "%b %d %Y",
+    "%B %d %Y",
 ]
 
 
 def normalize_date(val, target_fmt: str = "%Y-%m-%d"):
     """
-    Parse a date string and return it in target_fmt.
-    Returns the original value if parsing fails.
-    Updated for Pandas 2.0+ compatibility (using format="mixed").
+    Parse a date string using common formats and return it in target_fmt.
+    Returns the original value unchanged if no format matches.
     """
     if pd.isna(val):
         return val
     s = str(val).strip()
     for fmt in _DATE_FORMATS:
         try:
-            from datetime import datetime as _dt
-            return _dt.strptime(s, fmt).strftime(target_fmt)
+            return datetime.strptime(s, fmt).strftime(target_fmt)
         except ValueError:
             continue
     try:
-        dt = pd.to_datetime(s, format="mixed", errors="coerce")
-        return dt.strftime(target_fmt) if pd.notna(dt) else val
+        return pd.to_datetime(s, infer_datetime_format=True).strftime(target_fmt)
     except Exception:
         return val
 
@@ -145,26 +160,38 @@ def normalize_date(val, target_fmt: str = "%Y-%m-%d"):
 # ── Missing Value Handling ────────────────────────────────────────────────────
 
 def fill_missing(
-    df: pd.DataFrame,
+    df:       pd.DataFrame,
     strategy: str,
 ) -> tuple[pd.DataFrame, int]:
     """
     Fill or drop missing values according to the chosen strategy.
 
-    Strategies:
-        'Auto (Median/Mode)'            — median for numeric, mode for categorical
-        'Fill with 0'                   — fill all NaN with 0
-        "Fill with 'Unknown'"           — fill all NaN with "Unknown"
-        'Drop rows with missing values' — drop any row containing NaN
+    Strategies
+    ----------
+    "Auto (Median/Mode)"
+        Numeric columns → median; object/string columns → mode.
+    "Fill with 0"
+        Replace all NaN with scalar 0.
+    "Fill with 'Unknown'"
+        Replace all NaN with the string "Unknown".
+    "Drop rows with missing values"
+        Drop every row that contains at least one NaN.
 
-    Returns:
-        (modified_df, cells_affected)
+    Returns
+    -------
+    (modified_df, cells_or_rows_affected)
+        For drop strategy: rows dropped.
+        For fill strategies: cells filled (missing_before − missing_after).
     """
     missing_before = int(df.isnull().sum().sum())
 
+    if missing_before == 0:
+        return df, 0
+
     if strategy == "Drop rows with missing values":
-        df = df.dropna()
-        return df, missing_before
+        rows_before = len(df)
+        df          = df.dropna()
+        return df, rows_before - len(df)
 
     if strategy == "Fill with 0":
         df = df.fillna(0)
@@ -174,37 +201,46 @@ def fill_missing(
         df = df.fillna("Unknown")
         return df, missing_before
 
-    # Auto (Median/Mode)
+    # ── Auto (Median/Mode) ────────────────────────────────────────────────────
     for col in df.columns:
+        if df[col].isnull().sum() == 0:
+            continue
         if pd.api.types.is_numeric_dtype(df[col]):
             med = df[col].median()
-            df[col] = df[col].fillna(med)
+            # If entire column is NaN, median is NaN — fill with 0 to preserve dtype
+            df[col] = df[col].fillna(0 if pd.isna(med) else med)
         else:
             mode_s = df[col].mode()
             fill_v = mode_s.iloc[0] if not mode_s.empty else "Unknown"
             df[col] = df[col].fillna(fill_v)
 
-    return df, missing_before
+    missing_after = int(df.isnull().sum().sum())
+    return df, missing_before - missing_after
 
 
 # ── Column Operations ─────────────────────────────────────────────────────────
 
 def remove_empty_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
-    """Drop columns that are entirely NaN."""
+    """Drop columns that contain only NaN values."""
     before = len(df.columns)
     df     = df.dropna(axis=1, how="all")
     return df, before - len(df.columns)
 
 
 def remove_duplicate_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
-    """Remove columns with identical content (keep the first occurrence)."""
+    """
+    Remove columns whose content is identical to an earlier column.
+    Uses a fast tuple-hash — much faster than to_json() on large DataFrames.
+    The first occurrence of each unique column is kept.
+    """
     before = len(df.columns)
-    seen:  set[int] = set()
+    seen:  set[int]  = set()
     keep:  list[str] = []
     for col in df.columns:
         try:
-            h = hash(df[col].to_json())
+            h = hash(tuple(df[col].values))
         except Exception:
+            # Unhashable types — always keep
             keep.append(col)
             continue
         if h not in seen:
@@ -215,7 +251,7 @@ def remove_duplicate_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
 
 
 def remove_constant_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
-    """Drop columns where all non-null values are the same."""
+    """Drop columns where all non-null values are the same (zero variance)."""
     before     = len(df.columns)
     const_cols = [c for c in df.columns if df[c].nunique(dropna=True) <= 1]
     df         = df.drop(columns=const_cols)
@@ -225,24 +261,30 @@ def remove_constant_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
 # ── Main Pipeline ─────────────────────────────────────────────────────────────
 
 def run_cleaning_pipeline(
-    df: pd.DataFrame,
-    options: dict,
+    df:          pd.DataFrame,
+    options:     dict,
     progress_cb: Callable[[float, str], None] | None = None,
 ) -> tuple[pd.DataFrame, dict]:
     """
     Execute the full cleaning pipeline.
 
-    Args:
-        df:          Input DataFrame (copied internally — original not modified).
-        options:     Dict of cleaning options (merged with defaults below).
-        progress_cb: Optional callback(fraction: float, message: str).
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame. Copied internally — original is never modified.
+    options : dict
+        Cleaning options merged with safe defaults (see ``_DEFAULTS`` below).
+    progress_cb : callable, optional
+        Called as ``progress_cb(fraction: float, message: str)`` after each step.
 
-    Returns:
-        (cleaned_df, report_dict)
+    Returns
+    -------
+    (cleaned_df, report_dict)
+        report_dict contains one key per cleaning action plus before/after stats.
     """
     df = df.copy()
 
-    # ── Defaults ──────────────────────────────────────────
+    # ── Defaults — every key guaranteed present ───────────────────────────────
     opt: dict = {
         "fill_strategy":     "Auto (Median/Mode)",
         "use_ftfy":          True,
@@ -262,12 +304,22 @@ def run_cleaning_pipeline(
         **options,
     }
 
+    # ── Initial snapshot for accurate reporting ───────────────────────────────
+    _initial_missing = int(df.isnull().sum().sum())
+
     report: dict = {
+        # ── Timestamps & identity ─────────────────────────────────────────────
         "timestamp":            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "fill_strategy_used":   opt["fill_strategy"],
+        # ── Before stats ─────────────────────────────────────────────────────
         "rows_before":          len(df),
         "cols_before":          len(df.columns),
+        "missing_count_before": _initial_missing,   # ← NEW: actual initial count
+        # ── After stats (filled at end) ───────────────────────────────────────
         "rows_after":           0,
         "cols_after":           0,
+        "missing_count_after":  0,                  # ← NEW: filled at end
+        # ── Action counters ───────────────────────────────────────────────────
         "empty_rows_removed":   0,
         "duplicates_removed":   0,
         "empty_cols_removed":   0,
@@ -277,7 +329,7 @@ def run_cleaning_pipeline(
         "missing_dropped_rows": 0,
         "headers_stripped":     0,
         "headers_snake_cased":  0,
-        "encoding_repaired":    0,   # ← only increments on actual changes
+        "encoding_repaired":    0,
         "spaces_trimmed":       0,
         "emails_normalized":    0,
         "phones_normalized":    0,
@@ -290,127 +342,129 @@ def run_cleaning_pipeline(
     def _progress(msg: str) -> None:
         current_step[0] += 1
         if progress_cb:
-            progress_cb(current_step[0] / steps, msg)
+            progress_cb(min(current_step[0] / steps, 1.0), msg)
 
-    # ── 1. Strip header whitespace ───────────────────────
-    orig_cols  = list(df.columns)
-    df.columns = [str(c).strip() for c in df.columns]
+    # ── Step 1: Strip header whitespace ──────────────────────────────────────
+    orig_cols    = list(df.columns)
+    df.columns   = [str(c).strip() for c in df.columns]
     report["headers_stripped"] = sum(
         1 for a, b in zip(df.columns, orig_cols) if a != str(b).strip()
     )
     _progress("Stripping column header whitespace…")
 
-    # ── 2. Remove empty rows ─────────────────────────────
+    # ── Step 2: Remove empty rows ─────────────────────────────────────────────
     if opt["remove_empty_rows"]:
-        before                      = len(df)
-        df                          = df.dropna(how="all")
-        report["empty_rows_removed"] = before - len(df)
+        _before                      = len(df)
+        df                           = df.dropna(how="all")
+        report["empty_rows_removed"] = _before - len(df)
     _progress("Removing empty rows…")
 
-    # ── 3. Remove empty columns ──────────────────────────
+    # ── Step 3: Remove empty columns ──────────────────────────────────────────
     if opt["remove_empty_cols"]:
-        df, n                      = remove_empty_columns(df)
+        df, n                        = remove_empty_columns(df)
         report["empty_cols_removed"] = n
     _progress("Removing empty columns…")
 
-    # ── 4. Remove duplicate columns ──────────────────────
+    # ── Step 4: Remove duplicate columns ──────────────────────────────────────
     if opt["remove_dup_cols"]:
-        df, n                    = remove_duplicate_columns(df)
+        df, n                      = remove_duplicate_columns(df)
         report["dup_cols_removed"] = n
     _progress("Removing duplicate columns…")
 
-    # ── 5. Remove constant columns ───────────────────────
+    # ── Step 5: Remove constant columns ───────────────────────────────────────
     if opt["remove_const_cols"]:
-        df, n                     = remove_constant_columns(df)
+        df, n                       = remove_constant_columns(df)
         report["const_cols_removed"] = n
     _progress("Removing constant columns…")
 
-    # ── 6. Remove exact duplicate rows ───────────────────
-    before                       = len(df)
+    # ── Step 6: Remove exact duplicate rows ───────────────────────────────────
+    _before                      = len(df)
     df                           = df.drop_duplicates(keep="first")
-    report["duplicates_removed"] = before - len(df)
+    report["duplicates_removed"] = _before - len(df)
     _progress("Removing duplicate rows…")
 
-    # ── 7. Repair encoding with ftfy ─────────────────────
+    # ── Step 7: Repair encoding with ftfy ─────────────────────────────────────
     if opt["use_ftfy"]:
-        total_repaired = 0
-        str_cols = df.select_dtypes(include="object").columns
-        for col in str_cols:
-            original_col = df[col].copy()
-            df[col]      = df[col].apply(_fix_encoding_ftfy)
-            total_repaired += _count_encoding_repairs(original_col, df[col])
-        report["encoding_repaired"] = total_repaired
+        _total_repaired = 0
+        _str_cols       = df.select_dtypes(include="object").columns
+        for col in _str_cols:
+            _orig_col       = df[col].copy()
+            df[col]         = df[col].apply(_fix_encoding_ftfy)
+            _total_repaired += _count_encoding_repairs(_orig_col, df[col])
+        report["encoding_repaired"] = _total_repaired
     _progress("Repairing text encoding…")
 
-    # ── 8. Trim extra whitespace ─────────────────────────
+    # ── Step 8: Trim extra whitespace ─────────────────────────────────────────
     if opt["trim_spaces"]:
-        trimmed  = 0
-        str_cols = df.select_dtypes(include="object").columns
-        for col in str_cols:
-            original_col = df[col].copy()
-            df[col]      = df[col].apply(_trim_spaces)
-            for orig, fixed in zip(original_col, df[col]):
-                o_na = orig  is None or (isinstance(orig,  float) and pd.isna(orig))
-                f_na = fixed is None or (isinstance(fixed, float) and pd.isna(fixed))
-                if not o_na and not f_na and str(orig) != str(fixed):
-                    trimmed += 1
-        report["spaces_trimmed"] = trimmed
+        _trimmed  = 0
+        _str_cols = df.select_dtypes(include="object").columns
+        for col in _str_cols:
+            _orig_col = df[col].copy()
+            df[col]   = df[col].apply(_trim_spaces)
+            for _o, _f in zip(_orig_col, df[col]):
+                _o_na = _o is None or (isinstance(_o, float) and pd.isna(_o))
+                _f_na = _f is None or (isinstance(_f, float) and pd.isna(_f))
+                if not _o_na and not _f_na and str(_o) != str(_f):
+                    _trimmed += 1
+        report["spaces_trimmed"] = _trimmed
     _progress("Trimming whitespace…")
 
-    # ── 9. Normalize emails / phones / dates ─────────────
+    # ── Step 9: Normalize emails / phones / dates ──────────────────────────────
     if opt["normalize_emails"]:
         for col in opt["email_columns"]:
             if col in df.columns:
-                before_col = df[col].copy()
-                df[col]    = df[col].apply(normalize_email)
+                _bc      = df[col].copy()
+                df[col]  = df[col].apply(normalize_email)
                 report["emails_normalized"] += sum(
-                    1 for o, f in zip(before_col, df[col])
-                    if pd.notna(o) and pd.notna(f) and str(o) != str(f)
+                    1 for o, f in zip(_bc, df[col]) if str(o) != str(f)
                 )
 
     if opt["normalize_phones"]:
         for col in opt["phone_columns"]:
             if col in df.columns:
-                before_col = df[col].copy()
-                df[col]    = df[col].apply(normalize_phone)
+                _bc      = df[col].copy()
+                df[col]  = df[col].apply(normalize_phone)
                 report["phones_normalized"] += sum(
-                    1 for o, f in zip(before_col, df[col])
-                    if pd.notna(o) and pd.notna(f) and str(o) != str(f)
+                    1 for o, f in zip(_bc, df[col]) if str(o) != str(f)
                 )
 
     if opt["normalize_dates"]:
         for col in opt["date_columns"]:
             if col in df.columns:
-                before_col = df[col].copy()
-                df[col]    = df[col].apply(
+                _bc      = df[col].copy()
+                df[col]  = df[col].apply(
                     lambda v: normalize_date(v, opt["date_target_fmt"])
                 )
                 report["dates_normalized"] += sum(
-                    1 for o, f in zip(before_col, df[col])
-                    if pd.notna(o) and pd.notna(f) and str(o) != str(f)
+                    1 for o, f in zip(_bc, df[col]) if str(o) != str(f)
                 )
     _progress("Normalizing email / phone / date columns…")
 
-    # ── 10. Fill / drop missing values ───────────────────
-    missing_before = int(df.isnull().sum().sum())
-    df, _          = fill_missing(df, opt["fill_strategy"])
-    missing_after  = int(df.isnull().sum().sum())
+    # ── Step 10: Fill / drop missing values ───────────────────────────────────
+    _missing_before_fill = int(df.isnull().sum().sum())
+    df, _affected        = fill_missing(df, opt["fill_strategy"])
+    _missing_after_fill  = int(df.isnull().sum().sum())
 
     if opt["fill_strategy"] == "Drop rows with missing values":
-        report["missing_dropped_rows"] = missing_before
+        report["missing_dropped_rows"] = _affected
+        report["missing_filled"]       = 0
     else:
-        report["missing_filled"] = missing_before - missing_after
+        report["missing_filled"]       = max(0, _missing_before_fill - _missing_after_fill)
+        report["missing_dropped_rows"] = 0
     _progress("Handling missing values…")
 
-    # ── 11. snake_case headers ───────────────────────────
+    # ── Step 11: snake_case headers ───────────────────────────────────────────
     if opt["snake_case"]:
-        orig_cols2             = list(df.columns)
-        df.columns             = [to_snake_case(c) for c in df.columns]
+        _orig_cols2             = list(df.columns)
+        df.columns              = [to_snake_case(c) for c in df.columns]
         report["headers_snake_cased"] = sum(
-            1 for a, b in zip(df.columns, orig_cols2) if a != b
+            1 for a, b in zip(df.columns, _orig_cols2) if a != b
         )
     _progress("Finalizing…")
 
-    report["rows_after"] = len(df)
-    report["cols_after"] = len(df.columns)
+    # ── Final stats ───────────────────────────────────────────────────────────
+    report["rows_after"]          = len(df)
+    report["cols_after"]          = len(df.columns)
+    report["missing_count_after"] = int(df.isnull().sum().sum())
+
     return df, report
