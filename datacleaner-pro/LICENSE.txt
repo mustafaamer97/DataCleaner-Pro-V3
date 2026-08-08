@@ -1,0 +1,22 @@
+DataCleaner Pro V3 — Commercial Edition
+
+Copyright (c) 2026
+
+All rights reserved.
+
+This software is provided as a commercial product.
+
+The purchaser is granted a non-exclusive, non-transferable license
+to use the software for personal or internal business purposes.
+
+The purchaser may not:
+- Resell the software or source code
+- Redistribute the software publicly
+- Publish the source code online
+- Upload the software to public repositories
+- Create derivative commercial products based on the source code
+- Share the purchased package with unauthorized third parties
+
+The software is provided "AS IS", without warranties of any kind.
+
+All rights not expressly granted above are reserved by the copyright owner.
