@@ -4,6 +4,7 @@ helpers.py — Shared utility functions for DataCleaner Pro V3.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import re
 from pathlib import Path
@@ -23,7 +24,6 @@ MAX_ROWS_PROFILING = 500_000
 
 SUPPORTED_EXTENSIONS = {".csv", ".xlsx", ".xls", ".pdf"}
 
-# Only DataCleaner-owned session keys should be cleared when files change.
 DATA_STATE_KEYS = {
     "demo_mode",
     "df_clean",
@@ -91,12 +91,15 @@ def validate_uploaded_file(uploaded_file) -> tuple[bool, str]:
     if uploaded_file is None:
         return False, "No file provided."
 
-    filename = str(getattr(uploaded_file, "name", ""))
+    filename = str(getattr(uploaded_file, "name", "")).strip()
+
+    if not filename:
+        return False, "Uploaded file has no filename."
+
     ext = Path(filename).suffix.lower()
 
     if ext not in SUPPORTED_EXTENSIONS:
         supported = ", ".join(sorted(SUPPORTED_EXTENSIONS))
-
         return False, (
             f"Unsupported file type: **{ext or 'unknown'}**. "
             f"Supported: {supported}"
@@ -107,6 +110,9 @@ def validate_uploaded_file(uploaded_file) -> tuple[bool, str]:
     except (AttributeError, TypeError, ValueError):
         return False, "Could not determine the uploaded file size."
 
+    if size_bytes < 0:
+        return False, "Invalid file size."
+
     max_bytes = MAX_FILE_SIZE_MB * 1_024 * 1_024
 
     if size_bytes > max_bytes:
@@ -116,6 +122,9 @@ def validate_uploaded_file(uploaded_file) -> tuple[bool, str]:
             f"File **{filename}** is {size_mb:.1f} MB. "
             f"Maximum allowed: {MAX_FILE_SIZE_MB} MB."
         )
+
+    if size_bytes == 0:
+        return False, f"File **{filename}** is empty."
 
     return True, ""
 
@@ -128,18 +137,45 @@ def file_signature(files: list) -> str:
     """
     Generate a stable signature from uploaded filenames and sizes.
 
+    Includes a lightweight content hash so a modified file with the same
+    filename and size can still invalidate DataCleaner state.
+
     Sorting makes the signature independent of upload ordering.
     """
     if not files:
         return ""
 
-    parts = []
+    parts: list[str] = []
 
     for file in files:
         name = str(getattr(file, "name", ""))
         size = int(getattr(file, "size", 0))
 
-        parts.append(f"{name}_{size}")
+        digest = ""
+
+        try:
+            current_pos = file.tell()
+            file.seek(0)
+
+            hasher = hashlib.sha256()
+
+            while True:
+                chunk = file.read(1024 * 1024)
+
+                if not chunk:
+                    break
+
+                hasher.update(chunk)
+
+            digest = hasher.hexdigest()[:16]
+
+            file.seek(current_pos)
+
+        except Exception:
+            # Signature still remains deterministic if hashing is unavailable.
+            digest = f"{size}"
+
+        parts.append(f"{name}_{size}_{digest}")
 
     return "|".join(sorted(parts))
 
@@ -162,7 +198,6 @@ def reset_state_if_new_files(files: list) -> None:
     for key in list(DATA_STATE_KEYS):
         st.session_state.pop(key, None)
 
-    # Remove per-file cached DataCleaner state.
     for key in list(st.session_state.keys()):
         if (
             key.startswith("profile_")
@@ -226,24 +261,30 @@ def load_dataframe(
     Returns:
         DataFrame or None if loading fails.
     """
+    if not isinstance(file_bytes, (bytes, bytearray)):
+        return None
+
     ext = Path(filename).suffix.lower()
 
     if ext not in {".csv", ".xlsx", ".xls"}:
         return None
 
+    if not file_bytes:
+        return None
+
     buffer = io.BytesIO(file_bytes)
 
     try:
-
         # ── CSV ───────────────────────────────────────────────────────────────
         if ext == ".csv":
-
             encodings = [
                 "utf-8-sig",
                 "utf-8",
                 "cp1252",
                 "latin-1",
             ]
+
+            last_error: Exception | None = None
 
             for encoding in encodings:
                 try:
@@ -263,47 +304,52 @@ def load_dataframe(
                 except (
                     UnicodeDecodeError,
                     pd.errors.ParserError,
-                ):
+                ) as exc:
+                    last_error = exc
                     continue
 
-            # Final fallback.
-            buffer.seek(0)
+            # Final tolerant fallback.
+            try:
+                buffer.seek(0)
 
-            df = pd.read_csv(
-                buffer,
-                encoding="latin-1",
-                encoding_errors="replace",
-                low_memory=False,
-            )
+                df = pd.read_csv(
+                    buffer,
+                    encoding="latin-1",
+                    encoding_errors="replace",
+                    low_memory=False,
+                )
 
-            return df if not df.empty else None
+                return df if not df.empty else None
 
-        # ── Excel ─────────────────────────────────────────────────────────────
-        if ext in {".xlsx", ".xls"}:
-
-            engine = (
-                "openpyxl"
-                if ext == ".xlsx"
-                else "xlrd"
-            )
-
-            buffer.seek(0)
-
-            df = pd.read_excel(
-                buffer,
-                engine=engine,
-                sheet_name=sheet_name,
-            )
-
-            if df.empty:
+            except Exception:
                 return None
 
-            return df
+        # ── Excel ─────────────────────────────────────────────────────────────
+        engine = "openpyxl" if ext == ".xlsx" else "xlrd"
+
+        buffer.seek(0)
+
+        df = pd.read_excel(
+            buffer,
+            engine=engine,
+            sheet_name=sheet_name,
+        )
+
+        if df.empty:
+            return None
+
+        return df
+
+    except (
+        ValueError,
+        OSError,
+        ImportError,
+        pd.errors.ParserError,
+    ):
+        return None
 
     except Exception:
         return None
-
-    return None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -344,7 +390,6 @@ def df_to_bytes(
                 index=False,
                 sheet_name="Cleaned Data",
             )
-
     else:
         df.to_csv(
             buffer,
