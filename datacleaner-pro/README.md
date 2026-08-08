@@ -1,63 +1,95 @@
-# 🧹 DataCleaner Pro V3 — Commercial Edition
+# 🧹 DataCleaner Pro V3
 
-**Clean. Analyze. Export.**
+### Clean. Analyze. Export.
 
-A professional-grade data cleaning web application built with Streamlit.
+DataCleaner Pro is a professional data-cleaning and analysis application built with Streamlit and Python.
 
-## Features
+It helps users clean messy datasets, identify data-quality issues, analyze their data, and export clean results — all through a simple web interface.
 
-| Feature | Description |
-|---|---|
-| Multi-file upload | CSV, Excel (.xlsx/.xls), PDF |
-| Smart Profiling | Auto-detect emails, phones, dates, outliers |
-| One-Click Clean | Dedup, encode repair, fill nulls, normalize |
-| PDF Extraction | 3-tier strategy with text fallback |
-| Batch Processing | Clean many files → download as ZIP |
-| Demo Mode | Built-in sample dataset — no upload needed |
-| Professional Reports | Detailed before/after cleaning reports |
+---
 
-## Quick Start
+## ✨ Features
+
+### 📂 Multi-File Support
+Import common data formats including:
+
+- CSV
+- Excel (XLSX / XLS)
+- PDF
+
+### 🧹 Smart Cleaning
+
+Automatically handle common data-quality problems:
+
+- Duplicate rows
+- Empty rows
+- Empty columns
+- Missing values
+- Text normalization
+- Encoding issues
+
+### 🔍 Data Profiling
+
+Analyze your dataset before and after cleaning:
+
+- Column types
+- Missing values
+- Duplicate records
+- Data-quality issues
+- Basic statistics
+- Outliers
+
+### 📊 Before vs After
+
+Compare your original dataset with the cleaned version and understand exactly what changed.
+
+### 📤 Export
+
+Export your cleaned data and reports as:
+
+- Excel
+- CSV
+- Cleaning Report
+
+---
+
+## 🖥️ Interface
+
+DataCleaner Pro provides a clean Streamlit interface designed to make data cleaning simple without requiring advanced programming knowledge.
+
+### Main workflow
+
+1. Upload your dataset
+2. Inspect the data
+3. Clean and normalize the dataset
+4. Analyze the results
+5. Compare Before vs After
+6. Export your cleaned dataset and report
+
+---
+
+## 🎯 Demo Dataset
+
+A sample customer dataset is included so users can test the application immediately without uploading their own data.
+
+---
+
+## ⚙️ Technology
+
+Built with:
+
+- Python
+- Streamlit
+- Pandas
+- pdfplumber
+- ftfy
+
+---
+
+## 🚀 Installation
+
+### 1. Clone the repository
 
 ```bash
-# 1. Clone or download
-git clone https://github.com/yourrepo/datacleaner-pro
-
-# 2. Install dependencies
-pip install -r requirements.txt
-
-# 3. Run
-streamlit run app.py
-```
-
-## Project Structure
-
-```
-datacleaner-pro/
-├── app.py                 ← Streamlit UI
-├── utils/
-│   ├── cleaning.py        ← Core cleaning engine
-│   ├── profiling.py       ← Smart data profiling
-│   ├── duplicates.py      ← Duplicate detection
-│   ├── outliers.py        ← Outlier detection
-│   ├── pdf_processor.py   ← PDF extraction
-│   ├── exporters.py       ← Export engine
-│   ├── reports.py         ← Report generation
-│   └── helpers.py         ← Shared utilities
-├── sample_data/
-│   └── sample_customers.csv
-├── tests/
-│   └── test_cleaning.py
-└── requirements.txt
-```
-
-## Running Tests
-
-```bash
-python -m pytest tests/ -v
-```
-
-## Deployment (Streamlit Cloud)
-
-1. Push to GitHub
-2. Go to [share.streamlit.io](https://share.streamlit.io)
-3. Select repo → `app.py` → Deploy
+git clone YOUR_REPOSITORY_URL
+cd YOUR_PROJECT_FOLDER
