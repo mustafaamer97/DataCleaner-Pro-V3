@@ -2,8 +2,8 @@
 DataCleaner Pro V3 — Commercial Edition
 Clean. Analyze. Export.
 
-Entry point for the Streamlit application.
-All heavy logic lives in utils/ modules.
+Streamlit application entry point.
+All business logic lives in utils/ modules — this file is UI only.
 """
 
 from __future__ import annotations
@@ -13,28 +13,34 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+# ── Internal imports ──────────────────────────────────────────────────────────
 from utils.helpers import (
-    validate_uploaded_file,
-    load_dataframe,
-    get_excel_sheet_names,
-    df_to_bytes,
-    reset_state_if_new_files,
-    get_df_memory,
-    file_signature,
     MAX_ROWS_FUZZY,
+    df_to_bytes,          # noqa: F401  (available for ad-hoc use)
+    error_box,
+    get_df_memory,
+    get_excel_sheet_names,
+    info_box,
+    load_dataframe,
+    metric_card,
+    reset_state_if_new_files,
+    section_header,
+    success_box,
+    validate_uploaded_file,
+    warning_box,
 )
-from utils.profiling   import profile_dataframe
-from utils.cleaning    import run_cleaning_pipeline
-from utils.outliers    import detect_all_outliers
-from utils.duplicates  import find_fuzzy_duplicates
+from utils.cleaning      import run_cleaning_pipeline
+from utils.profiling     import profile_dataframe
+from utils.outliers      import detect_all_outliers
+from utils.duplicates    import find_fuzzy_duplicates
 from utils.pdf_processor import extract_pdf_tables
-from utils.exporters   import df_to_excel_bytes, df_to_csv_bytes, build_batch_zip
-from utils.reports     import build_text_report
+from utils.exporters     import build_batch_zip, df_to_csv_bytes, df_to_excel_bytes
+from utils.reports       import build_text_report
 
 
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
 #  PAGE CONFIG
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
 
 st.set_page_config(
     page_title="DataCleaner Pro V3",
@@ -44,17 +50,16 @@ st.set_page_config(
 )
 
 
-# ═══════════════════════════════════════════════════════════
-#  GLOBAL CSS
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
+#  CSS
+# ═══════════════════════════════════════════════════════════════════════════════
 
-st.markdown("""
+st.markdown(
+    """
 <style>
 html, body, [class*="css"] {
     font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
 }
-
-/* ── Header ──────────────────────────────────── */
 .main-header {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     padding: 2rem 2.5rem;
@@ -62,16 +67,16 @@ html, body, [class*="css"] {
     color: white;
     text-align: center;
     margin-bottom: 1.8rem;
-    box-shadow: 0 8px 32px rgba(102,126,234,0.35);
+    box-shadow: 0 8px 32px rgba(102, 126, 234, 0.35);
 }
 .main-header h1 {
-    font-size: 2.2rem; margin: 0;
+    font-size: 2.4rem; margin: 0;
     font-weight: 800; letter-spacing: -0.5px;
 }
 .main-header .subtitle {
-    font-size: 1rem; margin: 0.4rem 0 0; opacity: 0.88;
+    font-size: 1.05rem; margin: 0.4rem 0 0; opacity: 0.88;
 }
-.version-badge {
+.v-badge {
     display: inline-block;
     background: rgba(255,255,255,0.22);
     padding: 0.2rem 0.9rem;
@@ -81,13 +86,11 @@ html, body, [class*="css"] {
     font-weight: 600;
     letter-spacing: 0.5px;
 }
-
-/* ── Metric Cards ─────────────────────────────── */
 .metric-card {
     background: white;
     border: 1px solid #e2e8f0;
     border-radius: 14px;
-    padding: 1.1rem 0.7rem;
+    padding: 1.2rem 0.8rem;
     text-align: center;
     box-shadow: 0 2px 10px rgba(0,0,0,0.06);
     transition: transform 0.18s ease, box-shadow 0.18s ease;
@@ -97,91 +100,86 @@ html, body, [class*="css"] {
     transform: translateY(-2px);
     box-shadow: 0 6px 20px rgba(0,0,0,0.10);
 }
-.metric-card .icon  { font-size: 1.4rem; margin-bottom: 0.3rem; }
-.metric-card .value { font-size: 1.7rem; font-weight: 800; color: #667eea; line-height: 1.1; }
-.metric-card .label { font-size: 0.78rem; color: #718096; margin-top: 0.3rem; font-weight: 500; }
-
-/* ── Status Boxes ─────────────────────────────── */
+.metric-card .icon  { font-size: 1.5rem; margin-bottom: 0.3rem; }
+.metric-card .value { font-size: 1.8rem; font-weight: 800; color: #667eea; line-height: 1.1; }
+.metric-card .label { font-size: 0.79rem; color: #718096; margin-top: 0.3rem; font-weight: 500; }
 .success-box {
     background: #f0fff4; border-left: 4px solid #48bb78;
-    padding: 0.9rem 1.1rem; border-radius: 8px; margin: 0.7rem 0; font-size: 0.92rem;
+    padding: 0.9rem 1.1rem; border-radius: 8px; margin: 0.8rem 0; font-size: 0.93rem;
 }
 .info-box {
     background: #ebf8ff; border-left: 4px solid #4299e1;
-    padding: 0.9rem 1.1rem; border-radius: 8px; margin: 0.7rem 0; font-size: 0.92rem;
+    padding: 0.9rem 1.1rem; border-radius: 8px; margin: 0.8rem 0; font-size: 0.93rem;
 }
 .warning-box {
     background: #fffaf0; border-left: 4px solid #ed8936;
-    padding: 0.9rem 1.1rem; border-radius: 8px; margin: 0.7rem 0; font-size: 0.92rem;
+    padding: 0.9rem 1.1rem; border-radius: 8px; margin: 0.8rem 0; font-size: 0.93rem;
 }
 .error-box {
     background: #fff5f5; border-left: 4px solid #fc8181;
-    padding: 0.9rem 1.1rem; border-radius: 8px; margin: 0.7rem 0; font-size: 0.92rem;
+    padding: 0.9rem 1.1rem; border-radius: 8px; margin: 0.8rem 0; font-size: 0.93rem;
 }
-
-/* ── Section Headers ──────────────────────────── */
 .section-header {
-    font-size: 1.08rem; font-weight: 700; color: #2d3748;
+    font-size: 1.12rem; font-weight: 700; color: #2d3748;
     border-bottom: 2px solid #667eea;
-    padding-bottom: 0.35rem; margin: 1.5rem 0 0.9rem;
+    padding-bottom: 0.35rem; margin: 1.6rem 0 1rem;
 }
-
-/* ── Profile Items ────────────────────────────── */
 .profile-warning {
     background: #fffaf0; border: 1px solid #fbd38d;
-    border-radius: 8px; padding: 0.65rem 1rem;
-    margin: 0.35rem 0; font-size: 0.87rem; color: #744210;
+    border-radius: 8px; padding: 0.7rem 1rem;
+    margin: 0.4rem 0; font-size: 0.88rem; color: #744210;
 }
 .profile-ok {
     background: #f0fff4; border: 1px solid #9ae6b4;
-    border-radius: 8px; padding: 0.65rem 1rem;
-    margin: 0.35rem 0; font-size: 0.87rem; color: #22543d;
+    border-radius: 8px; padding: 0.7rem 1rem;
+    margin: 0.4rem 0; font-size: 0.88rem; color: #22543d;
 }
 .profile-rec {
     background: #ebf8ff; border: 1px solid #90cdf4;
-    border-radius: 8px; padding: 0.65rem 1rem;
-    margin: 0.35rem 0; font-size: 0.87rem; color: #2a4365;
+    border-radius: 8px; padding: 0.7rem 1rem;
+    margin: 0.4rem 0; font-size: 0.88rem; color: #2a4365;
 }
-
-/* ── Before/After Table ───────────────────────── */
 .compare-table {
     width: 100%; border-collapse: collapse;
-    font-size: 0.87rem; border-radius: 8px; overflow: hidden;
+    font-size: 0.88rem; border-radius: 8px; overflow: hidden;
 }
 .compare-table th {
     background: linear-gradient(135deg, #667eea, #764ba2);
-    color: white; padding: 0.65rem 1rem; text-align: left; font-weight: 600;
+    color: white; padding: 0.7rem 1rem; text-align: left; font-weight: 600;
 }
 .compare-table td {
-    padding: 0.5rem 1rem; border-bottom: 1px solid #e2e8f0;
+    padding: 0.55rem 1rem; border-bottom: 1px solid #e2e8f0;
 }
 .compare-table tr:nth-child(even) td { background: #f7fafc; }
 .compare-table tr:last-child td      { border-bottom: none; }
-
-/* ── Outlier Badge ────────────────────────────── */
 .outlier-badge {
     display: inline-block; background: #fff5f5;
     border: 1px solid #fc8181; border-radius: 6px;
-    padding: 0.15rem 0.6rem; font-size: 0.77rem;
+    padding: 0.15rem 0.6rem; font-size: 0.78rem;
     color: #c53030; font-weight: 600; margin: 0.1rem;
 }
-
-/* ── Report Box ───────────────────────────────── */
+.workflow-step {
+    display: inline-block; background: #667eea; color: white;
+    border-radius: 50%; width: 28px; height: 28px;
+    text-align: center; line-height: 28px;
+    font-weight: 700; font-size: 0.85rem; margin-right: 0.5rem;
+}
 .report-box {
     background: #1a202c; color: #e2e8f0;
-    border-radius: 10px; padding: 1.3rem;
+    border-radius: 10px; padding: 1.4rem;
     font-family: 'Courier New', monospace;
-    font-size: 0.79rem; line-height: 1.7;
+    font-size: 0.80rem; line-height: 1.7;
     white-space: pre-wrap; overflow-x: auto;
 }
-
-/* ── Progress ─────────────────────────────────── */
+.file-badge {
+    background: #f7fafc; border: 1px solid #e2e8f0;
+    border-radius: 8px; padding: 0.6rem 0.9rem;
+    font-size: 0.82rem; margin-bottom: 0.4rem;
+}
 .stProgress > div > div {
     background: linear-gradient(90deg, #667eea, #764ba2) !important;
     border-radius: 4px !important;
 }
-
-/* ── Buttons ──────────────────────────────────── */
 .stButton > button {
     border-radius: 9px !important; font-weight: 600 !important;
     transition: all 0.18s ease !important;
@@ -194,172 +192,324 @@ html, body, [class*="css"] {
     background: linear-gradient(135deg, #667eea, #764ba2) !important;
     color: white !important; border: none !important;
     border-radius: 9px !important; font-weight: 600 !important;
-    transition: all 0.18s ease !important;
-    width: 100%;
 }
-.stDownloadButton > button:hover {
-    opacity: 0.91 !important; transform: translateY(-1px) !important;
-}
-
-/* ── Tabs ─────────────────────────────────────── */
+.stDownloadButton > button:hover { opacity: 0.91 !important; }
 .stTabs [data-baseweb="tab-list"] { gap: 6px; }
 .stTabs [data-baseweb="tab"] {
     border-radius: 8px 8px 0 0 !important;
-    font-weight: 600 !important;
-    padding: 0.45rem 1.1rem !important;
+    font-weight: 600 !important; padding: 0.5rem 1.3rem !important;
 }
-
-/* ── Sidebar ──────────────────────────────────── */
-section[data-testid="stSidebar"] { min-width: 265px !important; }
-
-/* ── Mobile ───────────────────────────────────── */
+section[data-testid="stSidebar"] { min-width: 270px !important; }
 @media (max-width: 768px) {
-    .main-header h1 { font-size: 1.5rem; }
-    .main-header .subtitle { font-size: 0.86rem; }
-    .metric-card .value { font-size: 1.3rem; }
-    .metric-card { padding: 0.85rem 0.5rem; }
-    .section-header { font-size: 0.97rem; }
+    .main-header h1        { font-size: 1.55rem; }
+    .main-header .subtitle { font-size: 0.88rem; }
+    .metric-card .value    { font-size: 1.35rem; }
+    .metric-card           { padding: 0.9rem 0.5rem; }
+    .section-header        { font-size: 1rem; }
 }
 @media (max-width: 480px) {
-    .main-header { padding: 1.2rem 1rem; }
-    .main-header h1 { font-size: 1.2rem; }
+    .main-header    { padding: 1.3rem 1rem; }
+    .main-header h1 { font-size: 1.25rem; }
 }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 
-# ═══════════════════════════════════════════════════════════
-#  SMALL UI HELPERS
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
+#  PAGE HEADER
+# ═══════════════════════════════════════════════════════════════════════════════
 
-def _info(text: str)    -> None: st.markdown(f'<div class="info-box">{text}</div>',    unsafe_allow_html=True)
-def _success(text: str) -> None: st.markdown(f'<div class="success-box">{text}</div>', unsafe_allow_html=True)
-def _warning(text: str) -> None: st.markdown(f'<div class="warning-box">{text}</div>', unsafe_allow_html=True)
-def _error(text: str)   -> None: st.markdown(f'<div class="error-box">{text}</div>',   unsafe_allow_html=True)
-def _sh(text: str)      -> None: st.markdown(f'<div class="section-header">{text}</div>', unsafe_allow_html=True)
+st.markdown(
+    """
+<div class="main-header">
+    <h1>🧹 DataCleaner Pro</h1>
+    <div class="subtitle">Clean. Analyze. Export.</div>
+    <div class="v-badge">V3 — Commercial Edition</div>
+</div>
+""",
+    unsafe_allow_html=True,
+)
 
-def _card(icon: str, value: str, label: str) -> str:
-    return (
-        f'<div class="metric-card">'
-        f'<div class="icon">{icon}</div>'
-        f'<div class="value">{value}</div>'
-        f'<div class="label">{label}</div>'
-        f'</div>'
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SIDEBAR  — all widget state collected into sidebar_opts dict
+#  This eliminates the fragile "if variable in dir()" pattern completely.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+sidebar_opts: dict = {
+    "fill_strategy":     "Auto (Median/Mode)",
+    "use_ftfy":          True,
+    "remove_empty_cols": True,
+    "remove_dup_cols":   True,
+    "remove_const_cols": False,
+    "snake_case":        False,
+    "trim_spaces":       True,
+    "remove_empty_rows": True,
+    "normalize_emails":  False,
+    "normalize_phones":  False,
+    "normalize_dates":   False,
+    "date_target_fmt":   "%Y-%m-%d",
+    "fuzzy_check":       False,
+    "fuzzy_threshold":   0.85,
+    "pdf_page_mode":     "All Pages",
+    "pdf_pages_input":   "",
+}
+
+with st.sidebar:
+    st.markdown("## 🧹 DataCleaner Pro")
+    st.markdown(
+        '<span style="background:#667eea;color:white;padding:2px 10px;'
+        'border-radius:12px;font-size:0.73rem;font-weight:600;">'
+        "V3 Commercial</span>",
+        unsafe_allow_html=True,
+    )
+    st.markdown("---")
+
+    st.markdown("### 📁 Upload Files")
+    uploaded_files = st.file_uploader(
+        "Drag & Drop or Browse",
+        type=["csv", "xlsx", "xls", "pdf"],
+        accept_multiple_files=True,
+        label_visibility="collapsed",
+        help="CSV · Excel (.xlsx / .xls) · PDF — multiple files supported",
+    )
+
+    if uploaded_files:
+        reset_state_if_new_files(uploaded_files)
+
+    st.markdown("---")
+
+    # Demo button — clears all state then sets demo_mode flag
+    if st.button("🎯 Try Demo Dataset", use_container_width=True):
+        for _k in [k for k in st.session_state if not k.startswith("_")]:
+            del st.session_state[_k]
+        st.session_state["demo_mode"] = True
+        st.rerun()
+
+    if st.session_state.get("demo_mode") and not uploaded_files:
+        st.markdown(
+            '<div class="info-box" style="font-size:0.82rem">'
+            "✅ Demo mode active — using built-in sample dataset.</div>",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("---")
+
+    # Categorise files by type
+    data_files: list = [
+        f for f in (uploaded_files or [])
+        if Path(f.name).suffix.lower() in (".csv", ".xlsx", ".xls")
+    ]
+    pdf_files: list = [
+        f for f in (uploaded_files or [])
+        if Path(f.name).suffix.lower() == ".pdf"
+    ]
+
+    # Cleaning settings — shown only when relevant
+    if data_files or st.session_state.get("demo_mode"):
+        st.markdown("### ⚙️ Clean Settings")
+
+        sidebar_opts["fill_strategy"] = st.selectbox(
+            "Missing values strategy:",
+            [
+                "Auto (Median/Mode)",
+                "Fill with 0",
+                "Fill with 'Unknown'",
+                "Drop rows with missing values",
+            ],
+            help="How to handle NaN / empty cells",
+        )
+
+        st.markdown("**Cleaning Options:**")
+        sidebar_opts["use_ftfy"]          = st.checkbox("🔧 Repair encoding (ftfy)",   value=True)
+        sidebar_opts["remove_empty_cols"] = st.checkbox("🗑️ Remove empty columns",     value=True)
+        sidebar_opts["remove_dup_cols"]   = st.checkbox("🔁 Remove duplicate columns", value=True)
+        sidebar_opts["remove_const_cols"] = st.checkbox("📌 Remove constant columns",  value=False)
+        sidebar_opts["snake_case"]        = st.checkbox("🐍 Headers → snake_case",     value=False)
+        sidebar_opts["trim_spaces"]       = st.checkbox("✂️ Trim extra whitespace",    value=True)
+        sidebar_opts["remove_empty_rows"] = st.checkbox("🧹 Remove empty rows",        value=True)
+
+        st.markdown("**Advanced Normalization:**")
+        sidebar_opts["normalize_emails"] = st.checkbox("📧 Normalize detected emails", value=False)
+        sidebar_opts["normalize_phones"] = st.checkbox("📞 Normalize detected phones", value=False)
+        sidebar_opts["normalize_dates"]  = st.checkbox("📅 Normalize detected dates",  value=False)
+
+        if sidebar_opts["normalize_dates"]:
+            sidebar_opts["date_target_fmt"] = st.selectbox(
+                "Target date format:",
+                ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y"],
+            )
+
+        st.markdown("**Duplicate Detection:**")
+        sidebar_opts["fuzzy_check"] = st.checkbox(
+            "🔍 Smart fuzzy duplicate check", value=False
+        )
+        if sidebar_opts["fuzzy_check"]:
+            sidebar_opts["fuzzy_threshold"] = st.slider(
+                "Similarity threshold:", 0.70, 1.00, 0.85, 0.01
+            )
+
+    if pdf_files:
+        st.markdown("### ⚙️ PDF Settings")
+        sidebar_opts["pdf_page_mode"] = st.radio(
+            "Pages to extract:", ["All Pages", "Specific Pages"], horizontal=True
+        )
+        if sidebar_opts["pdf_page_mode"] == "Specific Pages":
+            sidebar_opts["pdf_pages_input"] = st.text_input(
+                "Page numbers (e.g. 1,3,5):", placeholder="1,2,3"
+            )
+
+    st.markdown("---")
+    st.markdown(
+        "<div style='font-size:0.74rem;color:#718096;text-align:center;line-height:1.7'>"
+        "🚀 <strong>DataCleaner Pro V3</strong><br>"
+        "Streamlit · Pandas · pdfplumber · ftfy<br>"
+        "<span style='color:#48bb78'>● Commercial Edition</span>"
+        "</div>",
+        unsafe_allow_html=True,
     )
 
 
-# ═══════════════════════════════════════════════════════════
-#  CACHED LOADERS
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
+#  UTILITY — file bytes cache
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _get_file_bytes(uploaded_file) -> bytes:
+    """
+    Return raw bytes for an uploaded file object.
+
+    Caches under session_state keyed by name+size to prevent re-reading
+    an exhausted file object on subsequent Streamlit re-renders.
+    """
+    key = f"_bytes_{uploaded_file.name}_{uploaded_file.size}"
+    if key not in st.session_state:
+        st.session_state[key] = uploaded_file.read()
+    return st.session_state[key]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  UTILITY — demo dataset
+# ═══════════════════════════════════════════════════════════════════════════════
 
 @st.cache_data(show_spinner=False)
-def _cached_load(file_bytes: bytes, filename: str, sheet_name: str | int = 0) -> pd.DataFrame | None:
-    """Cache-wrapped DataFrame loader."""
-    return load_dataframe(file_bytes, filename, sheet_name=sheet_name)
+def _load_demo() -> pd.DataFrame | None:
+    """
+    Load the built-in sample dataset.
 
-
-@st.cache_data(show_spinner=False)
-def _cached_sheet_names(file_bytes: bytes, filename: str) -> list[str]:
-    """Cache-wrapped Excel sheet name reader."""
-    return get_excel_sheet_names(file_bytes, filename)
-
-
-@st.cache_data(show_spinner=False)
-def _load_demo() -> pd.DataFrame:
-    """Load the built-in sample dataset."""
+    Tries the file on disk first; falls back to an inline CSV string
+    so the demo always works on Streamlit Cloud even without the file.
+    Returns None only if both attempts fail.
+    """
     try:
-        return pd.read_csv("sample_data/sample_customers.csv")
-    except FileNotFoundError:
-        import io as _io
-        _CSV = """\
-id,first_name,last_name,email,phone,age,signup_date,country,salary,notes
-1,John,Smith,JOHN@EMAIL.COM,+1 (555) 123-4567,34,2024-01-15,USA,55000,Good customer
-2,john,smith,john@email.com,+15551234567,34,15/01/2024,USA,55000,Good customer
-3,Jane,Doe,jane.doe@company.com,(555) 987-6543,28,Feb 3 2024,Canada,62000,
-4,ALICE,JOHNSON, ALICE@DOMAIN.COM ,555.222.3333,999,2024-03-10,UK,75000,Outlier age
-5,Bob,Williams,bob_at_email.com,5551112222,41,2024-02-20,Australia,48000,Invalid email
-6,Carol,  Brown  ,carol@web.org,+44 20 7946 0958,36,2024-04-01,UK,58000,Extra spaces
-7,,,,,,,,,Missing everything
-8,Dave,Jones,dave@jones.net,+61 2 9876 5432,52,2024-05-12,Australia,91000,
-9,Eve,Wilson,eve@wilson.com,,29,2024-06-30,Canada,67000,No phone
-10,Frank,Moore,frank@moore.io,+1 800 555 0199,38,2024-07-04,USA,53000,"""
-        return pd.read_csv(_io.StringIO(_CSV))
+        df = pd.read_csv("sample_data/sample_customers.csv")
+        if not df.empty:
+            return df
+    except Exception:
+        pass
+
+    import io as _io
+
+    _inline = (
+        "id,first_name,last_name,email,phone,age,signup_date,country,salary,notes\n"
+        "1,John,Smith,JOHN@EMAIL.COM,+1 (555) 123-4567,34,2024-01-15,USA,55000,Good customer\n"
+        "2,john,smith,john@email.com,+15551234567,34,15/01/2024,USA,55000,Good customer\n"
+        "3,Jane,Doe,jane.doe@company.com,(555) 987-6543,28,Feb 3 2024,Canada,62000,\n"
+        "4,ALICE,JOHNSON, ALICE@DOMAIN.COM ,555.222.3333,999,2024-03-10,UK,75000,Outlier age\n"
+        "5,Bob,Williams,bob_at_email.com,5551112222,41,2024-02-20,Australia,48000,Invalid email\n"
+        "6,Carol,  Brown  ,carol@web.org,+44 20 7946 0958,36,2024-04-01,UK,58000,Extra spaces\n"
+        "7,,,,,,,,,Missing everything\n"
+        "8,Dave,Jones,dave@jones.net,+61 2 9876 5432,52,2024-05-12,Australia,91000,\n"
+        "9,Eve,Wilson,eve@wilson.com,,29,2024-06-30,Canada,67000,No phone\n"
+        "10,Frank,Moore,frank@moore.io,+1 800 555 0199,38,2024-07-04,USA,53000,\n"
+    )
+    try:
+        return pd.read_csv(_io.StringIO(_inline))
+    except Exception:
+        return None
 
 
-# ═══════════════════════════════════════════════════════════
-#  PROFILING PANEL
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
+#  UI HELPERS
+# ═══════════════════════════════════════════════════════════════════════════════
 
-def render_profile_panel(profile: dict) -> None:
-    """Render the smart data quality analysis section."""
-    _sh("🔎 Data Quality Analysis")
+def _render_profile_panel(profile: dict) -> None:
+    """Display data quality warnings, detected column types, recommendations."""
+    section_header("🔎 Data Quality Analysis")
 
     if profile["warnings"]:
         for w in profile["warnings"]:
-            st.markdown(f'<div class="profile-warning">⚠️ {w}</div>', unsafe_allow_html=True)
-    else:
-        st.markdown('<div class="profile-ok">✅ No major data quality issues detected.</div>',
-                    unsafe_allow_html=True)
-
-    # Detected semantic types (interesting ones only)
-    tg = profile["type_groups"]
-    for sem, cols in tg.items():
-        if cols and sem not in ("numeric", "categorical", "text", "unknown"):
-            label = sem.title()
             st.markdown(
-                f'<div class="profile-ok">✅ <strong>{label}</strong> '
-                f'column(s): {", ".join(cols)}</div>',
+                f'<div class="profile-warning">⚠️ {w}</div>',
+                unsafe_allow_html=True,
+            )
+    else:
+        st.markdown(
+            '<div class="profile-ok">✅ No major data quality issues detected.</div>',
+            unsafe_allow_html=True,
+        )
+
+    tg = profile["type_groups"]
+    for sem in ("email", "phone", "date", "url", "currency", "id"):
+        cols_of_type = tg.get(sem, [])
+        if cols_of_type:
+            st.markdown(
+                f'<div class="profile-ok">'
+                f'✅ <strong>{sem.title()}</strong> columns detected: '
+                f'{", ".join(cols_of_type)}'
+                f"</div>",
                 unsafe_allow_html=True,
             )
 
     if profile["recommendations"]:
         st.markdown("**Recommended actions:**")
-        for r in profile["recommendations"]:
-            st.markdown(f'<div class="profile-rec">▸ {r}</div>', unsafe_allow_html=True)
+        for rec in profile["recommendations"]:
+            st.markdown(
+                f'<div class="profile-rec">▸ {rec}</div>',
+                unsafe_allow_html=True,
+            )
 
 
-# ═══════════════════════════════════════════════════════════
-#  ANALYTICS TABS
-# ═══════════════════════════════════════════════════════════
-
-def render_analytics(df: pd.DataFrame, profile: dict) -> None:
-    """Render dataset analytics tabs."""
-    _sh("📊 Dataset Analytics")
-
-    mem      = get_df_memory(df)
-    dup_pct  = f"{df.duplicated().mean() * 100:.1f}%"
-    miss_pct = f"{df.isnull().mean().mean() * 100:.1f}%"
+def _render_analytics(df: pd.DataFrame, profile: dict) -> None:
+    """Four-tab analytics panel: numeric summary, column detail, missing, outliers."""
+    section_header("📊 Dataset Analytics")
 
     c1, c2, c3, c4, c5 = st.columns(5)
-    for col_ui, icon, val, lbl in [
-        (c1, "💾", mem,             "Memory"),
-        (c2, "📏", f"{len(df):,}", "Rows"),
-        (c3, "📋", len(df.columns), "Columns"),
-        (c4, "🔁", dup_pct,         "Duplicate %"),
-        (c5, "❓", miss_pct,        "Missing %"),
+    _dup_pct  = f"{df.duplicated().mean() * 100:.1f}%"
+    _miss_pct = f"{df.isnull().mean().mean() * 100:.1f}%"
+    for _col, _icon, _val, _lbl in [
+        (c1, "💾", get_df_memory(df),           "Memory"),
+        (c2, "📏", f"{len(df):,}",               "Rows"),
+        (c3, "📋", str(len(df.columns)),         "Columns"),
+        (c4, "🔁", _dup_pct,                     "Duplicate %"),
+        (c5, "❓", _miss_pct,                    "Missing %"),
     ]:
-        col_ui.markdown(_card(icon, val, lbl), unsafe_allow_html=True)
+        _col.markdown(metric_card(_icon, _val, _lbl), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    t1, t2, t3, t4 = st.tabs(
-        ["📈 Numeric Summary", "🔤 Column Details", "❓ Missing Values", "🚨 Outliers"]
-    )
+    t1, t2, t3, t4 = st.tabs([
+        "📈 Numeric Summary",
+        "🔤 Column Details",
+        "❓ Missing Values",
+        "🚨 Outliers",
+    ])
 
     with t1:
         num_df = df.select_dtypes(include="number")
         if num_df.empty:
-            _info("No numeric columns found.")
+            info_box("No numeric columns found.")
         else:
             st.dataframe(num_df.describe().round(3).T, use_container_width=True)
 
     with t2:
-        rows = []
+        _rows_list = []
         for col in df.columns:
             cp = profile["col_profiles"].get(col, {})
-            rows.append({
+            _rows_list.append({
                 "Column":    col,
-                "Type":      str(df[col].dtype),
+                "Dtype":     str(df[col].dtype),
                 "Semantic":  cp.get("semantic", "—"),
                 "Non-Null":  int(df[col].notna().sum()),
                 "Missing":   cp.get("missing", 0),
@@ -367,670 +517,886 @@ def render_analytics(df: pd.DataFrame, profile: dict) -> None:
                 "Unique":    int(df[col].nunique()),
                 "Sample":    ", ".join(cp.get("sample", [])),
             })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, height=320)
+        st.dataframe(
+            pd.DataFrame(_rows_list),
+            use_container_width=True,
+            height=320,
+        )
 
     with t3:
         miss = df.isnull().sum()
         miss = miss[miss > 0].sort_values(ascending=False)
         if miss.empty:
-            _success("✅ No missing values!")
+            success_box("✅ No missing values!")
         else:
-            miss_df = pd.DataFrame({
-                "Column":   miss.index,
-                "Missing":  miss.values,
-                "Missing %": (miss.values / len(df) * 100).round(2),
-            })
-            st.dataframe(miss_df, use_container_width=True)
-
-    with t4:
-        outlier_report = detect_all_outliers(df)
-        if not outlier_report:
-            _success("✅ No outliers detected (IQR method).")
-        else:
-            for col_name, rep in outlier_report.items():
-                with st.expander(
-                    f"⚠️ {col_name} — {rep['count']} potential outlier(s)", expanded=False
-                ):
-                    st.markdown(
-                        f"- **Normal range (IQR):** {rep['lower']} – {rep['upper']}\n"
-                        f"- **Q1 / Q3:** {rep['q1']} / {rep['q3']}\n"
-                        f"- **Outlier count:** {rep['count']}"
-                    )
-                    for v in rep["values"][:10]:
-                        st.markdown(
-                            f'<span class="outlier-badge">{v}</span>',
-                            unsafe_allow_html=True,
-                        )
-                    _warning(
-                        "⚠️ These values are flagged for review only. "
-                        "DataCleaner Pro never auto-deletes outliers."
-                    )
-
-
-# ═══════════════════════════════════════════════════════════
-#  BEFORE / AFTER COMPARISON
-# ═══════════════════════════════════════════════════════════
-
-def render_comparison(report: dict) -> None:
-    """Render a before/after comparison table from the cleaning report."""
-    _sh("📊 Before vs After")
-
-    enc = report.get("encoding_repaired", 0)
-
-    rows = [
-        ("Rows",                        f"{report['rows_before']:,}",      f"{report['rows_after']:,}"),
-        ("Columns",                      str(report["cols_before"]),         str(report["cols_after"])),
-        ("Duplicate rows removed",       str(report["duplicates_removed"]),  "0 ✓"),
-        ("Empty rows removed",           str(report["empty_rows_removed"]),  "0 ✓"),
-        ("Missing values filled",        str(report["missing_filled"]),      "0 ✓"),
-        ("Rows dropped (missing)",       str(report["missing_dropped_rows"]), "n/a"),
-        ("Empty columns removed",        str(report["empty_cols_removed"]),  "0 ✓"),
-        ("Duplicate columns removed",    str(report["dup_cols_removed"]),    "0 ✓"),
-        (f"Encoding repairs (ftfy)",     str(enc),                           f"{enc} cells fixed" if enc else "0"),
-    ]
-
-    html = (
-        '<table class="compare-table">'
-        "<thead><tr><th>Metric</th><th>Before / Count</th><th>After / Result</th></tr></thead>"
-        "<tbody>"
-    )
-    for metric, before, after in rows:
-        html += f"<tr><td>{metric}</td><td>{before}</td><td>{after}</td></tr>"
-    html += "</tbody></table>"
-
-    st.markdown(html, unsafe_allow_html=True)
-
-
-# ═══════════════════════════════════════════════════════════
-#  SIDEBAR CLEANING OPTIONS  (returns a plain dict — no fragile dir() hacks)
-# ═══════════════════════════════════════════════════════════
-
-def _collect_sidebar_options(profile: dict | None = None) -> dict:
-    """
-    Read all sidebar cleaning controls and return a clean options dict.
-
-    This function is the single source of truth for cleaning options.
-    It replaces the fragile `opt_x if "opt_x" in dir() else default` pattern.
-    All values come from st.session_state keys set by the sidebar widgets.
-    """
-    email_cols = profile["type_groups"].get("email", []) if profile else []
-    phone_cols = profile["type_groups"].get("phone", []) if profile else []
-    date_cols  = profile["type_groups"].get("date",  []) if profile else []
-
-    return {
-        "fill_strategy":     st.session_state.get("sb_fill_strategy",  "Auto (Median/Mode)"),
-        "use_ftfy":          st.session_state.get("sb_use_ftfy",        True),
-        "remove_empty_cols": st.session_state.get("sb_empty_cols",      True),
-        "remove_dup_cols":   st.session_state.get("sb_dup_cols",        True),
-        "remove_const_cols": st.session_state.get("sb_const_cols",      False),
-        "snake_case":        st.session_state.get("sb_snake_case",      False),
-        "trim_spaces":       st.session_state.get("sb_trim_spaces",     True),
-        "remove_empty_rows": st.session_state.get("sb_empty_rows",      True),
-        "normalize_emails":  st.session_state.get("sb_norm_emails",     False),
-        "normalize_phones":  st.session_state.get("sb_norm_phones",     False),
-        "normalize_dates":   st.session_state.get("sb_norm_dates",      False),
-        "date_target_fmt":   st.session_state.get("sb_date_fmt",        "%Y-%m-%d"),
-        "email_columns":     email_cols,
-        "phone_columns":     phone_cols,
-        "date_columns":      date_cols,
-    }
-
-
-# ═══════════════════════════════════════════════════════════
-#  PAGE HEADER
-# ═══════════════════════════════════════════════════════════
-
-st.markdown("""
-<div class="main-header">
-    <h1>🧹 DataCleaner Pro</h1>
-    <div class="subtitle">Clean. Analyze. Export.</div>
-    <div class="version-badge">V3 — Commercial Edition</div>
-</div>
-""", unsafe_allow_html=True)
-
-
-# ═══════════════════════════════════════════════════════════
-#  SIDEBAR
-# ═══════════════════════════════════════════════════════════
-
-with st.sidebar:
-    st.markdown("## 🧹 DataCleaner Pro")
-    st.markdown(
-        '<span style="background:#667eea;color:white;padding:2px 10px;'
-        'border-radius:12px;font-size:0.73rem;font-weight:600;">V3 Commercial</span>',
-        unsafe_allow_html=True,
-    )
-    st.markdown("---")
-
-    # ── File Upload ───────────────────────────────────────
-    st.markdown("### 📁 Upload Files")
-    uploaded_files = st.file_uploader(
-        "Drop files here or click Browse",
-        type=["csv", "xlsx", "xls", "pdf"],
-        accept_multiple_files=True,
-        label_visibility="collapsed",
-        help="CSV, Excel (.xlsx / .xls), PDF — multiple files supported",
-    )
-
-    if uploaded_files:
-        reset_state_if_new_files(uploaded_files, st.session_state)
-
-    # ── Demo Mode ─────────────────────────────────────────
-    st.markdown("---")
-    if st.button("🎯 Try Demo Dataset", use_container_width=True):
-        # Isolate demo mode completely from any file-upload state
-        keys_to_clear = [
-            k for k in st.session_state
-            if k not in {"_file_sig"} and not k.startswith("_")
-        ]
-        for k in keys_to_clear:
-            del st.session_state[k]
-        st.session_state["demo_mode"] = True
-
-    if st.session_state.get("demo_mode") and not uploaded_files:
-        _info("✅ Demo mode — built-in sample dataset loaded.")
-
-    st.markdown("---")
-
-    # ── Derive file groups ────────────────────────────────
-    data_files = [
-        f for f in (uploaded_files or [])
-        if Path(f.name).suffix.lower() in (".csv", ".xlsx", ".xls")
-    ]
-    pdf_files = [
-        f for f in (uploaded_files or [])
-        if Path(f.name).suffix.lower() == ".pdf"
-    ]
-
-    has_data = bool(data_files) or st.session_state.get("demo_mode", False)
-
-    # ── Cleaning Options (only when data files present) ───
-    if has_data:
-        st.markdown("### ⚙️ Clean Settings")
-
-        st.selectbox(
-            "Missing values:",
-            [
-                "Auto (Median/Mode)",
-                "Fill with 0",
-                "Fill with 'Unknown'",
-                "Drop rows with missing values",
-            ],
-            key="sb_fill_strategy",
-        )
-
-        st.markdown("**Options:**")
-        st.checkbox("🔧 Repair encoding (ftfy)",        value=True,  key="sb_use_ftfy")
-        st.checkbox("🗑️ Remove empty columns",          value=True,  key="sb_empty_cols")
-        st.checkbox("🔁 Remove duplicate columns",      value=True,  key="sb_dup_cols")
-        st.checkbox("📌 Remove constant columns",       value=False, key="sb_const_cols")
-        st.checkbox("🐍 Headers → snake_case",          value=False, key="sb_snake_case")
-        st.checkbox("✂️ Trim extra whitespace",         value=True,  key="sb_trim_spaces")
-        st.checkbox("🧹 Remove empty rows",             value=True,  key="sb_empty_rows")
-
-        st.markdown("**Normalization:**")
-        st.checkbox("📧 Normalize detected emails",     value=False, key="sb_norm_emails")
-        st.checkbox("📞 Normalize detected phones",     value=False, key="sb_norm_phones")
-        st.checkbox("📅 Normalize detected dates",      value=False, key="sb_norm_dates")
-
-        if st.session_state.get("sb_norm_dates"):
-            st.selectbox(
-                "Target date format:",
-                ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y"],
-                key="sb_date_fmt",
+            st.dataframe(
+                pd.DataFrame({
+                    "Column":    miss.index,
+                    "Missing":   miss.values,
+                    "Missing %": (miss.values / len(df) * 100).round(2),
+                }),
+                use_container_width=True,
             )
 
-        st.markdown("**Duplicate Detection:**")
-        st.checkbox("🔍 Smart fuzzy duplicate check",   value=False, key="sb_fuzzy")
-        if st.session_state.get("sb_fuzzy"):
-            st.slider("Similarity threshold:", 0.70, 1.00, 0.85, 0.01, key="sb_fuzzy_threshold")
+    with t4:
+        try:
+            _outlier_rep = detect_all_outliers(df)
+        except Exception:
+            _outlier_rep = {}
 
-    # ── PDF Options ───────────────────────────────────────
-    if pdf_files:
-        st.markdown("### ⚙️ PDF Settings")
-        st.radio("Pages:", ["All Pages", "Specific Pages"], horizontal=True, key="sb_pdf_pages")
-        if st.session_state.get("sb_pdf_pages") == "Specific Pages":
-            st.text_input("Page numbers (e.g. 1,3,5):", placeholder="1,2,3", key="sb_pdf_page_nums")
+        if not _outlier_rep:
+            success_box("✅ No outliers detected (IQR method).")
+        else:
+            for _col_name, _rep in _outlier_rep.items():
+                with st.expander(
+                    f"⚠️ {_col_name} — {_rep['count']} potential outlier(s)",
+                    expanded=False,
+                ):
+                    st.markdown(
+                        f"- **Normal range (IQR):** {_rep['lower']} – {_rep['upper']}\n"
+                        f"- **Q1 / Q3:** {_rep['q1']} / {_rep['q3']}\n"
+                        f"- **Count:** {_rep['count']}"
+                    )
+                    for _v in _rep.get("values", [])[:10]:
+                        st.markdown(
+                            f'<span class="outlier-badge">{_v}</span>',
+                            unsafe_allow_html=True,
+                        )
+                    warning_box(
+                        "⚠️ Flagged for review only — "
+                        "DataCleaner Pro never deletes outliers automatically."
+                    )
 
-    st.markdown("---")
-    st.markdown("""
-    <div style='font-size:0.73rem;color:#718096;text-align:center;line-height:1.7'>
-        🚀 <strong>DataCleaner Pro V3</strong><br>
-        Streamlit · Pandas · pdfplumber · ftfy<br>
-        <span style='color:#48bb78'>● Commercial Edition</span>
-    </div>""", unsafe_allow_html=True)
+
+def _render_comparison(
+    report:    dict,
+    df_before: pd.DataFrame,
+    df_after:  pd.DataFrame,
+) -> None:
+    """
+    Render a Before / After HTML table.
+    All values are derived from the actual DataFrames — no hardcoded zeros.
+    """
+    section_header("📊 Before vs After")
+
+    _miss_before = int(df_before.isnull().sum().sum())
+    _miss_after  = int(df_after.isnull().sum().sum())
+    _dup_before  = int(df_before.duplicated().sum())
+    _dup_after   = int(df_after.duplicated().sum())
+    _enc         = int(report.get("encoding_repaired", 0))
+
+    _rows = [
+        ("Rows",
+         f"{len(df_before):,}",
+         f"{len(df_after):,}"),
+        ("Columns",
+         str(len(df_before.columns)),
+         str(len(df_after.columns))),
+        ("Missing values",
+         f"{_miss_before:,}",
+         f"{_miss_after:,}"),
+        ("Duplicate rows",
+         f"{_dup_before:,}",
+         f"{_dup_after:,}"),
+        ("Encoding repairs (ftfy)",
+         f"{_enc:,}",
+         "0 ✓" if _enc > 0 else "0"),
+        ("Memory",
+         get_df_memory(df_before),
+         get_df_memory(df_after)),
+    ]
+
+    _html = (
+        '<table class="compare-table">'
+        "<thead><tr><th>Metric</th><th>Before</th><th>After</th></tr></thead>"
+        "<tbody>"
+    )
+    for _metric, _before, _after in _rows:
+        _html += f"<tr><td>{_metric}</td><td>{_before}</td><td>{_after}</td></tr>"
+    _html += "</tbody></table>"
+
+    st.markdown(_html, unsafe_allow_html=True)
 
 
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
 #  WELCOME SCREEN
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
 
-demo_mode = st.session_state.get("demo_mode", False)
-has_files = bool(uploaded_files)
+_demo_mode = st.session_state.get("demo_mode", False)
 
-if not has_files and not demo_mode:
-    c1, c2, c3, c4 = st.columns(4)
-    for col_ui, icon, title, desc in [
-        (c1, "📊", "Multi-File",    "CSV · Excel · PDF"),
-        (c2, "✨", "Smart Clean",   "Dedup · Encode · Fill · Normalize"),
-        (c3, "🔎", "Data Profile",  "Types · Outliers · Issues"),
-        (c4, "📥", "Pro Export",    "Excel · CSV · ZIP · Reports"),
-    ]:
-        col_ui.markdown(
+if not uploaded_files and not _demo_mode:
+    _c1, _c2, _c3, _c4 = st.columns(4)
+    _features = [
+        ("📊", "Multi-File",     "CSV · Excel · PDF"),
+        ("✨", "Smart Clean",    "Dedup · Encode · Fill · Normalize"),
+        ("🔎", "Data Profiling", "Types · Outliers · Issues"),
+        ("📥", "Pro Export",     "Excel · CSV · ZIP · Reports"),
+    ]
+    for _col, (_icon, _title, _desc) in zip([_c1, _c2, _c3, _c4], _features):
+        _col.markdown(
             f'<div class="metric-card">'
-            f'<div style="font-size:2rem">{icon}</div>'
-            f'<div style="font-weight:700;font-size:0.93rem;color:#2d3748;margin:0.4rem 0">{title}</div>'
-            f'<div class="label">{desc}</div>'
-            f'</div>',
+            f'<div style="font-size:2rem">{_icon}</div>'
+            f'<div style="font-weight:700;font-size:0.95rem;'
+            f'color:#2d3748;margin:0.4rem 0">{_title}</div>'
+            f'<div class="label">{_desc}</div>'
+            f"</div>",
             unsafe_allow_html=True,
         )
     st.markdown("<br>", unsafe_allow_html=True)
-    _info(
+    info_box(
         "👈 <strong>Upload files from the sidebar</strong> or click "
         "<strong>🎯 Try Demo Dataset</strong> to get started.<br>"
-        "<span style='font-size:0.84rem'>Supports "
-        "<code>.csv</code> · <code>.xlsx</code> · <code>.xls</code> · <code>.pdf</code>"
-        " — multiple files welcome</span>"
+        "<span style='font-size:0.85rem'>Supports "
+        "<code>.csv</code> · <code>.xlsx</code> · <code>.xls</code> · "
+        "<code>.pdf</code> — multiple files welcome</span>"
     )
     st.stop()
 
 
-# ═══════════════════════════════════════════════════════════
-#  BUILD TAB LIST
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
+#  TABS
+# ═══════════════════════════════════════════════════════════════════════════════
 
-tab_labels: list[str] = []
-if has_data:
-    tab_labels.append("📊 CSV / Excel")
+_tab_labels: list[str] = []
+if data_files or _demo_mode:
+    _tab_labels.append("📊 CSV / Excel")
 if pdf_files:
-    tab_labels.append("📄 PDF Tables")
+    _tab_labels.append("📄 PDF Tables")
 if len(data_files) > 1:
-    tab_labels.append("⚡ Batch Process")
+    _tab_labels.append("⚡ Batch Process")
 
-if not tab_labels:
-    tab_labels = ["📊 CSV / Excel"]
+if not _tab_labels:
+    _tab_labels = ["📊 CSV / Excel"]
 
-all_tabs = st.tabs(tab_labels)
+_all_tabs = st.tabs(_tab_labels)
 
 
-# ═══════════════════════════════════════════════════════════
-#  TAB: CSV / EXCEL
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
+#  TAB 1 — CSV / EXCEL
+# ═══════════════════════════════════════════════════════════════════════════════
 
-if "📊 CSV / Excel" in tab_labels:
-    with all_tabs[tab_labels.index("📊 CSV / Excel")]:
+if "📊 CSV / Excel" in _tab_labels:
+    with _all_tabs[_tab_labels.index("📊 CSV / Excel")]:
 
-        # ── Load DataFrame ────────────────────────────────
-        if demo_mode and not data_files:
-            chosen_name = "sample_customers.csv"
+        # ── A. Resolve source DataFrame ───────────────────────────────────────
+
+        if _demo_mode and not data_files:
+            # ---- Demo mode ----
+            _chosen_name = "sample_customers.csv (Demo)"
+            _chosen_ext  = ".csv"
             with st.spinner("Loading demo dataset…"):
                 df_raw = _load_demo()
-            _success("🎯 Demo mode — using built-in sample dataset with intentional data issues.")
+            if df_raw is None:
+                error_box("❌ Could not load demo dataset.")
+                st.stop()
+            success_box(
+                "🎯 <strong>Demo mode</strong> — using built-in sample dataset "
+                "with intentional data quality issues."
+            )
 
         else:
-            # File selection
+            # ---- Uploaded file ----
             if len(data_files) == 1:
-                chosen_file = data_files[0]
-                chosen_name = chosen_file.name
+                _chosen_file = data_files[0]
             else:
-                chosen_name = st.selectbox(
+                _sel_name = st.selectbox(
                     "📂 Select file to process:",
                     [f.name for f in data_files],
                     key="sel_data_file",
                 )
-                chosen_file = next(f for f in data_files if f.name == chosen_name)
+                _chosen_file = next(f for f in data_files if f.name == _sel_name)
 
-            # Validate
-            ok, err_msg = validate_uploaded_file(chosen_file)
-            if not ok:
-                _error(f"❌ {err_msg}")
+            _chosen_name = _chosen_file.name
+            _chosen_ext  = Path(_chosen_name).suffix.lower()
+
+            _ok, _err = validate_uploaded_file(_chosen_file)
+            if not _ok:
+                error_box(f"❌ {_err}")
                 st.stop()
 
-            # Read bytes once — reuse for both sheet detection and loading
-            file_bytes = chosen_file.read()
-            chosen_file.seek(0)
+            # Read bytes once — cached to prevent exhausted file objects
+            _file_bytes = _get_file_bytes(_chosen_file)
 
-            # Excel sheet selector
-            ext = Path(chosen_name).suffix.lower()
-            sheet_choice: str | int = 0
-            if ext in (".xlsx", ".xls"):
-                sheet_names = _cached_sheet_names(file_bytes, chosen_name)
-                if len(sheet_names) > 1:
-                    sheet_choice = st.selectbox(
-                        f"📋 Select sheet ({len(sheet_names)} available):",
-                        sheet_names,
-                        key=f"sheet_{chosen_name}",
+            # Excel: sheet selector
+            _sheet_name: str | None = None
+            if _chosen_ext in (".xlsx", ".xls"):
+                _sheets = get_excel_sheet_names(_file_bytes, _chosen_name)
+                if len(_sheets) > 1:
+                    _chosen_sheet = st.selectbox(
+                        f"📋 Select sheet ({len(_sheets)} sheets found):",
+                        _sheets,
+                        key=f"_sheet_{_chosen_name}",
                     )
-                    _info(f"ℹ️ Loading sheet: **{sheet_choice}**")
-                elif len(sheet_names) == 1:
-                    sheet_choice = sheet_names[0]
+                    _sheet_name = _chosen_sheet
+                elif len(_sheets) == 1:
+                    _sheet_name = _sheets[0]
+                    info_box(f"📋 Loading sheet: <strong>{_sheet_name}</strong>")
+                # If get_excel_sheet_names returns [] (error), sheet_name stays None
 
-            with st.spinner(f"Loading **{chosen_name}**…"):
-                df_raw = _cached_load(file_bytes, chosen_name, sheet_name=sheet_choice)
+            with st.spinner(f"Loading **{_chosen_name}**…"):
+                df_raw = load_dataframe(
+                    _file_bytes,
+                    _chosen_name,
+                    sheet_name=_sheet_name,
+                )
 
-            if df_raw is None:
-                _error(
-                    f"❌ Could not load **{chosen_name}**. "
-                    "Please check that the file is a valid CSV or Excel file "
-                    "and try again."
+            if df_raw is None or df_raw.empty:
+                error_box(
+                    f"❌ Could not load **{_chosen_name}**. "
+                    "Please verify the file is a valid CSV or Excel document."
                 )
                 st.stop()
 
-        # Guard against empty DataFrame
-        if df_raw is None or df_raw.empty:
-            _warning("⚠️ The file loaded but contains no data.")
-            st.stop()
+        # ── B. STEP 1: Raw Preview ────────────────────────────────────────────
 
-        # ── STEP 1: Raw Preview ───────────────────────────
-        _sh(f"<span>📋 1. Raw Data — {chosen_name}</span>")
+        section_header(
+            f"<span class='workflow-step'>1</span> "
+            f"Raw Data Preview — {_chosen_name}"
+        )
 
-        k1, k2, k3, k4 = st.columns(4)
-        for col_ui, icon, val, lbl in [
-            (k1, "📏", f"{len(df_raw):,}",                "Rows"),
-            (k2, "📋", len(df_raw.columns),               "Columns"),
-            (k3, "❓", f"{df_raw.isnull().sum().sum():,}", "Missing Values"),
-            (k4, "🔁", f"{df_raw.duplicated().sum():,}",  "Duplicate Rows"),
+        _raw_missing = int(df_raw.isnull().sum().sum())
+        _raw_dups    = int(df_raw.duplicated().sum())
+
+        _rc1, _rc2, _rc3, _rc4 = st.columns(4)
+        for _col, _icon, _val, _lbl in [
+            (_rc1, "📏", f"{len(df_raw):,}",        "Rows"),
+            (_rc2, "📋", str(len(df_raw.columns)),  "Columns"),
+            (_rc3, "❓", f"{_raw_missing:,}",        "Missing Values"),
+            (_rc4, "🔁", f"{_raw_dups:,}",           "Duplicate Rows"),
         ]:
-            col_ui.markdown(_card(icon, val, lbl), unsafe_allow_html=True)
+            _col.markdown(metric_card(_icon, _val, _lbl), unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
         st.dataframe(df_raw.head(10), use_container_width=True, height=260)
 
-        # ── STEP 2: Profile ───────────────────────────────
-        _sh("🔎 2. Data Quality Analysis")
+        # ── C. STEP 2: Profiling ──────────────────────────────────────────────
 
-        profile_key = f"profile_{chosen_name}"
-        # Recompute profile if stale (e.g. after file switch)
-        if profile_key not in st.session_state:
+        section_header(
+            "<span class='workflow-step'>2</span> Data Quality Analysis"
+        )
+
+        # Profile key uses the chosen name — distinct per file
+        _profile_key = f"profile_{_chosen_name}"
+        if _profile_key not in st.session_state:
             with st.spinner("Profiling dataset…"):
                 try:
-                    st.session_state[profile_key] = profile_dataframe(df_raw)
-                except Exception as e:
-                    st.session_state[profile_key] = None
-                    _error(f"❌ Profiling failed: {e}")
+                    st.session_state[_profile_key] = profile_dataframe(df_raw)
+                except Exception as _e:
+                    error_box(f"❌ Profiling failed: {_e}")
+                    st.stop()
 
-        profile = st.session_state.get(profile_key)
+        _profile: dict = st.session_state[_profile_key]
+        _render_profile_panel(_profile)
 
-        if profile:
-            render_profile_panel(profile)
+        with st.expander("📊 Full Dataset Analytics", expanded=False):
+            _render_analytics(df_raw, _profile)
 
-            with st.expander("📊 Full Dataset Analytics", expanded=False):
-                render_analytics(df_raw, profile)
+        # ── D. STEP 3: Optional fuzzy duplicate check ─────────────────────────
 
-        # ── STEP 2b: Fuzzy duplicates ─────────────────────
-        if st.session_state.get("sb_fuzzy") and profile:
-            _sh("🔍 Smart Duplicate Review")
-            str_cols = [c for c in df_raw.columns if df_raw[c].dtype == object]
-            if not str_cols:
-                _info("No text columns available for fuzzy matching.")
+        if sidebar_opts["fuzzy_check"]:
+            section_header(
+                "<span class='workflow-step'>3</span> Smart Duplicate Review"
+            )
+            _str_cols = [c for c in df_raw.columns if df_raw[c].dtype == object]
+            if not _str_cols:
+                info_box("No text columns available for fuzzy matching.")
             elif len(df_raw) > MAX_ROWS_FUZZY:
-                _warning(
+                warning_box(
                     f"⚠️ Dataset has {len(df_raw):,} rows. "
                     f"Fuzzy matching is limited to {MAX_ROWS_FUZZY:,} rows."
                 )
             else:
-                fuzzy_cols = st.multiselect(
-                    "Columns to compare:", str_cols,
-                    default=str_cols[:min(2, len(str_cols))],
-                    key="fuzzy_col_select",
+                _fuzzy_cols = st.multiselect(
+                    "Columns to compare:",
+                    _str_cols,
+                    default=_str_cols[:2],
+                    key="fuzzy_cols",
                 )
-                threshold = st.session_state.get("sb_fuzzy_threshold", 0.85)
-                if fuzzy_cols and st.button("🔍 Run Fuzzy Check", key="btn_fuzzy"):
+                if _fuzzy_cols and st.button("🔍 Run Fuzzy Check", key="btn_fuzzy"):
                     with st.spinner("Checking for similar records…"):
                         try:
-                            fuzzy_df = find_fuzzy_duplicates(df_raw, fuzzy_cols, threshold=threshold)
-                        except Exception as exc:
-                            fuzzy_df = None
-                            _warning(f"Fuzzy check error: {exc}")
-                    if fuzzy_df is None:
-                        _warning(
-                            "⚠️ rapidfuzz is not installed. "
-                            "Run: `pip install rapidfuzz`"
+                            _fuzzy_result = find_fuzzy_duplicates(
+                                df_raw,
+                                _fuzzy_cols,
+                                threshold=sidebar_opts["fuzzy_threshold"],
+                            )
+                        except Exception as _fe:
+                            _fuzzy_result = None
+                            warning_box(f"Fuzzy check error: {_fe}")
+
+                    if _fuzzy_result is None:
+                        warning_box(
+                            "⚠️ Install rapidfuzz for fuzzy matching: "
+                            "`pip install rapidfuzz`"
                         )
-                    elif fuzzy_df.empty:
-                        _success("✅ No fuzzy duplicates found above the threshold.")
+                    elif _fuzzy_result.empty:
+                        success_box("✅ No fuzzy duplicates found above the threshold.")
                     else:
-                        _warning(
-                            f"⚠️ {len(fuzzy_df)} potential duplicate pair(s) found. "
+                        warning_box(
+                            f"⚠️ {len(_fuzzy_result)} potential duplicate pair(s) found. "
                             "Review below — nothing is deleted automatically."
                         )
-                        st.dataframe(fuzzy_df, use_container_width=True)
+                        st.dataframe(_fuzzy_result, use_container_width=True)
 
         st.markdown("---")
 
-        # ── STEP 3: Configure & Clean ─────────────────────
-        _sh("✨ 3. Configure & Clean")
-        _info(
-            "Review the analysis above, adjust settings in the sidebar, "
+        # ── E. STEP 4: Configure & Clean ──────────────────────────────────────
+
+        section_header(
+            "<span class='workflow-step'>4</span> Configure & Clean"
+        )
+        info_box(
+            "📋 Review the analysis above, adjust settings in the sidebar, "
             "then click <strong>Run Auto-Clean</strong>."
         )
 
-        col_run, col_rst = st.columns([4, 1])
-        with col_run:
-            run_btn = st.button(
+        _btn_col, _rst_col = st.columns([4, 1])
+        with _btn_col:
+            _run_btn = st.button(
                 "🚀 Run Auto-Clean",
                 type="primary",
                 use_container_width=True,
-                key=f"run_clean_{chosen_name}",
+                key=f"run_clean_{_chosen_name}",
             )
-        with col_rst:
-            if st.button("🔄 Reset", use_container_width=True, key=f"rst_{chosen_name}"):
-                for k in ["df_clean", "clean_report", "df_raw_snap", "active_file"]:
-                    st.session_state.pop(k, None)
+        with _rst_col:
+            if st.button(
+                "🔄 Reset",
+                use_container_width=True,
+                key=f"reset_{_chosen_name}",
+            ):
+                for _k in ["df_clean", "df_raw_snap", "clean_report", "active_file"]:
+                    st.session_state.pop(_k, None)
                 st.rerun()
 
-        if run_btn:
-            clean_opts = _collect_sidebar_options(profile)
-            prog_ph    = st.empty()
-            prog_bar   = prog_ph.progress(0, text="Starting…")
+        if _run_btn:
+            # All options from sidebar_opts — always fully defined
+            _clean_opts: dict = {
+                "fill_strategy":     sidebar_opts["fill_strategy"],
+                "use_ftfy":          sidebar_opts["use_ftfy"],
+                "remove_empty_cols": sidebar_opts["remove_empty_cols"],
+                "remove_dup_cols":   sidebar_opts["remove_dup_cols"],
+                "remove_const_cols": sidebar_opts["remove_const_cols"],
+                "snake_case":        sidebar_opts["snake_case"],
+                "trim_spaces":       sidebar_opts["trim_spaces"],
+                "remove_empty_rows": sidebar_opts["remove_empty_rows"],
+                "normalize_emails":  sidebar_opts["normalize_emails"],
+                "normalize_phones":  sidebar_opts["normalize_phones"],
+                "normalize_dates":   sidebar_opts["normalize_dates"],
+                "date_target_fmt":   sidebar_opts["date_target_fmt"],
+                # Column lists from profiler — guaranteed lists (never None)
+                "email_columns":     _profile["type_groups"].get("email", []),
+                "phone_columns":     _profile["type_groups"].get("phone", []),
+                "date_columns":      _profile["type_groups"].get("date",  []),
+            }
 
-            def _cb(frac: float, msg: str) -> None:
-                prog_bar.progress(min(frac, 1.0), text=msg)
+            _prog_ph  = st.empty()
+            _prog_bar = _prog_ph.progress(0, text="Starting…")
+
+            def _progress_cb(frac: float, msg: str) -> None:
+                _prog_bar.progress(min(float(frac), 1.0), text=msg)
 
             try:
-                df_clean, report = run_cleaning_pipeline(df_raw, clean_opts, progress_cb=_cb)
-                report["filename"]        = chosen_name
-                st.session_state["df_clean"]     = df_clean
+                _df_clean, _report = run_cleaning_pipeline(
+                    df_raw,
+                    _clean_opts,
+                    progress_cb=_progress_cb,
+                )
+                # Annotate report with display metadata
+                _report["filename"] = _chosen_name
+
+                # Persist — use _chosen_name as the active_file key
+                st.session_state["df_clean"]     = _df_clean
                 st.session_state["df_raw_snap"]  = df_raw.copy()
-                st.session_state["clean_report"] = report
-                st.session_state["active_file"]  = chosen_name
-                prog_ph.empty()
-                _success("✅ <strong>Cleaning complete!</strong> See results below.")
-            except Exception as exc:
-                prog_ph.empty()
-                _error(f"❌ Cleaning failed: {exc}")
+                st.session_state["clean_report"] = _report
+                st.session_state["active_file"]  = _chosen_name
 
-        # ── STEP 4+5+6: Results ───────────────────────────
-        if (
-            "df_clean" in st.session_state
-            and st.session_state.get("active_file") == chosen_name
-        ):
-            df_clean = st.session_state["df_clean"]
-            report   = st.session_state["clean_report"]
-            df_snap  = st.session_state.get("df_raw_snap", df_raw)
-
-            # KPI summary
-            _sh("📈 4. Cleaning Results")
-            m1, m2, m3, m4, m5, m6 = st.columns(6)
-            for col_ui, val, lbl in [
-                (m1, report["duplicates_removed"],   "Dupes Removed"),
-                (m2, report["empty_rows_removed"],   "Empty Rows"),
-                (m3, report["missing_filled"],       "Nulls Filled"),
-                (m4, report["empty_cols_removed"],   "Empty Cols"),
-                (m5, report["encoding_repaired"],    "Encoding Fixed"),
-                (m6, report["rows_after"],           "Final Rows"),
-            ]:
-                col_ui.markdown(_card("", f"{val:,}", lbl), unsafe_allow_html=True)
-
-            st.markdown("<br>", unsafe_allow_html=True)
-
-            # Before / After
-            render_comparison(report)
-
-            # Cleaned data preview
-            _sh("✅ 5. Cleaned Data Preview")
-            st.dataframe(df_clean.head(10), use_container_width=True, height=260)
-
-            with st.expander("📊 Cleaned Dataset Analytics", expanded=False):
-                clean_profile = profile_dataframe(df_clean)
-                render_analytics(df_clean, clean_profile)
-
-            # ── STEP 7: Export ────────────────────────────
-            _sh("⬇️ 6. Export")
-            base = Path(chosen_name).stem
-
-            e1, e2, e3 = st.columns(3)
-
-            with e1:
-                try:
-                    st.download_button(
-                        "📥 Download Excel",
-                        data=df_to_excel_bytes(df_clean),
-                        file_name=f"cleaned_{base}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True,
-                        key=f"dl_xl_{base}",
-                    )
-                except Exception as exc:
-                    _error(f"Excel export error: {exc}")
-
-            with e2:
-                try:
-                    st.download_button(
-                        "📥 Download CSV",
-                        data=df_to_csv_bytes(df_clean),
-                        file_name=f"cleaned_{base}.csv",
-                        mime="text/csv",
-                        use_container_width=True,
-                        key=f"dl_csv_{base}",
-                    )
-                except Exception as exc:
-                    _error(f"CSV export error: {exc}")
-
-            with e3:
-                rpt_text = build_text_report(report, chosen_name, df_snap, df_clean)
-                st.download_button(
-                    "📋 Download Report",
-                    data=rpt_text.encode("utf-8"),
-                    file_name=f"report_{base}.txt",
-                    mime="text/plain",
-                    use_container_width=True,
-                    key=f"dl_rpt_{base}",
+                _prog_ph.empty()
+                success_box(
+                    "✅ <strong>Cleaning complete!</strong> See results below."
                 )
 
-            with st.expander("📋 View Cleaning Report", expanded=False):
-                rpt_text = build_text_report(report, chosen_name, df_snap, df_clean)
-                st.markdown(
-                    f'<div class="report-box">{rpt_text}</div>',
+            except Exception as _ce:
+                _prog_ph.empty()
+                error_box(
+                    f"❌ Cleaning failed: {_ce}<br>"
+                    "<span style='font-size:0.82rem'>"
+                    "Please check your file and try again. "
+                    "If the problem persists, try a different missing-value strategy."
+                    "</span>"
+                )
+
+        # ── F. STEPS 5-7: Results ─────────────────────────────────────────────
+
+        # Guard: only show results if the stored results match current file
+        _active = st.session_state.get("active_file")
+        if "df_clean" in st.session_state and _active == _chosen_name:
+            df_clean     = st.session_state["df_clean"]
+            _report_data = st.session_state["clean_report"]
+            _df_snap     = st.session_state.get("df_raw_snap", df_raw)
+
+            # ── STEP 5: KPI summary ───────────────────────────────────────────
+            section_header(
+                "<span class='workflow-step'>5</span> Cleaning Results"
+            )
+
+            _m1, _m2, _m3, _m4, _m5, _m6 = st.columns(6)
+            for _col, _val, _lbl in [
+                (_m1, _report_data["duplicates_removed"],  "Dupes Removed"),
+                (_m2, _report_data["empty_rows_removed"],  "Empty Rows"),
+                (_m3, _report_data["missing_filled"],      "Nulls Filled"),
+                (_m4, _report_data["empty_cols_removed"],  "Empty Cols"),
+                (_m5, _report_data["encoding_repaired"],   "Encoding Fixed"),
+                (_m6, _report_data["rows_after"],          "Final Rows"),
+            ]:
+                _col.markdown(
+                    metric_card("", f"{_val:,}", _lbl),
                     unsafe_allow_html=True,
                 )
 
+            st.markdown("<br>", unsafe_allow_html=True)
 
-# ═══════════════════════════════════════════════════════════
-#  TAB: PDF TABLES
-# ═══════════════════════════════════════════════════════════
+            # ── STEP 6: Before / After ────────────────────────────────────────
+            _render_comparison(_report_data, _df_snap, df_clean)
 
-if "📄 PDF Tables" in tab_labels:
-    with all_tabs[tab_labels.index("📄 PDF Tables")]:
-
-        # File picker
-        if len(pdf_files) == 1:
-            chosen_pdf   = pdf_files[0]
-            chosen_pname = chosen_pdf.name
-        else:
-            chosen_pname = st.selectbox(
-                "📂 Select PDF:", [f.name for f in pdf_files], key="sel_pdf"
+            # ── STEP 6b: Cleaned preview ──────────────────────────────────────
+            section_header(
+                "<span class='workflow-step'>6</span> Cleaned Data Preview"
             )
-            chosen_pdf = next(f for f in pdf_files if f.name == chosen_pname)
+            st.dataframe(df_clean.head(10), use_container_width=True, height=260)
 
-        ok, err_msg = validate_uploaded_file(chosen_pdf)
-        if not ok:
-            _error(f"❌ {err_msg}")
+            with st.expander("📊 Cleaned Dataset Analytics", expanded=False):
+                try:
+                    _clean_profile = profile_dataframe(df_clean)
+                    _render_analytics(df_clean, _clean_profile)
+                except Exception as _ae:
+                    warning_box(f"Analytics error: {_ae}")
+
+            # ── STEP 7: Export ────────────────────────────────────────────────
+            section_header(
+                "<span class='workflow-step'>7</span> Export"
+            )
+            _base    = Path(_chosen_name.replace(" (Demo)", "")).stem
+            _e1, _e2, _e3 = st.columns(3)
+
+            with _e1:
+                try:
+                    st.download_button(
+                        label="📥 Download Excel",
+                        data=df_to_excel_bytes(df_clean),
+                        file_name=f"cleaned_{_base}.xlsx",
+                        mime=(
+                            "application/vnd.openxmlformats-officedocument"
+                            ".spreadsheetml.sheet"
+                        ),
+                        use_container_width=True,
+                        key=f"dl_xlsx_{_base}",
+                    )
+                except Exception as _ex:
+                    error_box(f"Excel export error: {_ex}")
+
+            with _e2:
+                try:
+                    st.download_button(
+                        label="📥 Download CSV",
+                        data=df_to_csv_bytes(df_clean),
+                        file_name=f"cleaned_{_base}.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key=f"dl_csv_{_base}",
+                    )
+                except Exception as _ex:
+                    error_box(f"CSV export error: {_ex}")
+
+            with _e3:
+                try:
+                    _rpt_text = build_text_report(
+                        _report_data,
+                        _chosen_name,
+                        _df_snap,
+                        df_clean,
+                    )
+                    st.download_button(
+                        label="📋 Download Report",
+                        data=_rpt_text.encode("utf-8"),
+                        file_name=f"report_{_base}.txt",
+                        mime="text/plain",
+                        use_container_width=True,
+                        key=f"dl_rpt_{_base}",
+                    )
+                except Exception as _ex:
+                    error_box(f"Report export error: {_ex}")
+
+            with st.expander("📋 View Cleaning Report", expanded=False):
+                try:
+                    _rpt_text = build_text_report(
+                        _report_data,
+                        _chosen_name,
+                        _df_snap,
+                        df_clean,
+                    )
+                    st.markdown(
+                        f'<div class="report-box">{_rpt_text}</div>',
+                        unsafe_allow_html=True,
+                    )
+                except Exception as _rx:
+                    error_box(f"Report render error: {_rx}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  TAB 2 — PDF TABLES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+if "📄 PDF Tables" in _tab_labels:
+    with _all_tabs[_tab_labels.index("📄 PDF Tables")]:
+
+        if len(pdf_files) == 1:
+            _chosen_pdf   = pdf_files[0]
+            _chosen_pname = _chosen_pdf.name
+        else:
+            _chosen_pname = st.selectbox(
+                "📂 Select PDF:",
+                [f.name for f in pdf_files],
+                key="sel_pdf",
+            )
+            _chosen_pdf = next(f for f in pdf_files if f.name == _chosen_pname)
+
+        _pok, _perr = validate_uploaded_file(_chosen_pdf)
+        if not _pok:
+            error_box(f"❌ {_perr}")
             st.stop()
 
-        _info(
-            f"📄 <strong>{chosen_pname}</strong> "
-            f"&nbsp;|&nbsp; 📦 {chosen_pdf.size / 1024:.1f} KB"
+        info_box(
+            f"📄 <strong>{_chosen_pname}</strong>"
+            f" &nbsp;|&nbsp; 📦 {_chosen_pdf.size / 1024:.1f} KB"
         )
 
-        # Page selection
-        pdf_page_mode  = st.session_state.get("sb_pdf_pages", "All Pages")
-        pdf_pages_text = st.session_state.get("sb_pdf_page_nums", "")
-
-        sel_mode  = "all"
-        sel_pages = None
-        if pdf_page_mode == "Specific Pages" and pdf_pages_text:
-            try:
-                sel_mode  = "specific"
-                sel_pages = [
-                    int(p.strip()) for p in pdf_pages_text.split(",")
-                    if p.strip().isdigit()
-                ]
-            except Exception:
-                pass
+        # Parse page selection
+        _sel_mode:   str             = "all"
+        _sel_pages:  list[int] | None = None
+        if sidebar_opts["pdf_page_mode"] == "Specific Pages":
+            _raw_pg = sidebar_opts["pdf_pages_input"].strip()
+            if _raw_pg:
+                try:
+                    _sel_mode  = "specific"
+                    _sel_pages = [
+                        int(p.strip())
+                        for p in _raw_pg.split(",")
+                        if p.strip().isdigit()
+                    ]
+                except Exception:
+                    pass
 
         if st.button(
-            "🔍 Extract Tables", type="primary",
-            use_container_width=True, key=f"pdf_btn_{chosen_pname}"
+            "🔍 Extract Tables",
+            type="primary",
+            use_container_width=True,
+            key=f"pdf_btn_{_chosen_pname}",
         ):
-            pdf_bytes = chosen_pdf.read()
-            chosen_pdf.seek(0)
-
-            prog_ph  = st.empty()
-            prog_bar = prog_ph.progress(0, text="Reading PDF…")
+            _pdf_bytes   = _get_file_bytes(_chosen_pdf)
+            _pdf_prog_ph = st.empty()
+            _pdf_prog    = _pdf_prog_ph.progress(0, text="Reading PDF…")
 
             def _pdf_cb(frac: float, msg: str) -> None:
-                prog_bar.progress(min(frac, 1.0), text=msg)
+                _pdf_prog.progress(min(float(frac), 1.0), text=msg)
 
             try:
-                results = extract_pdf_tables(
-                    pdf_bytes, chosen_pname,
-                    page_selection=sel_mode,
-                    specific_pages=sel_pages,
+                _pdf_results = extract_pdf_tables(
+                    _pdf_bytes,
+                    _chosen_pname,
+                    page_selection=_sel_mode,
+                    specific_pages=_sel_pages,
                     progress_cb=_pdf_cb,
                 )
-                st.session_state[f"pdf_{chosen_pname}"] = results
-            except Exception as exc:
-                _error(f"❌ PDF extraction failed: {exc}")
-                results = []
+                st.session_state[f"pdf_{_chosen_pname}"] = _pdf_results
+            except Exception as _pe:
+                error_box(f"❌ PDF extraction failed: {_pe}")
             finally:
-                prog_ph.empty()
+                _pdf_prog_ph.empty()
 
-        rkey = f"pdf_{chosen_pname}"
-        if rkey in st.session_state:
-            results = st.session_state[rkey]
-            good    = [r for r in results if r["dataframe"] is not None]
-            empty   = [r for r in results if r["dataframe"] is None]
-            tbl_r   = [r for r in good if "text" not in r["method"]]
-            txt_r   = [r for r in good if "text" in r["method"]]
+        _pdf_key = f"pdf_{_chosen_pname}"
+        if _pdf_key in st.session_state:
+            _results  = st.session_state[_pdf_key]
+            _good     = [r for r in _results if r["dataframe"] is not None]
+            _empty_pg = [r for r in _results if r["dataframe"] is None]
+            _tbl_r    = [r for r in _good if "text" not in r["method"]]
+            _txt_r    = [r for r in _good if "text" in r["method"]]
 
-            p1, p2, p3, p4 = st.columns(4)
-            for col_ui, icon, val, lbl in [
-                (p1, "📊", len(tbl_r),   "Tables"),
-                (p2, "📝", len(txt_r),   "Text Pages"),
-                (p3, "❌", len(empty),   "Empty Pages"),
-                (p4, "📄", len(results), "Scanned"),
+            _pp1, _pp2, _pp3, _pp4 = st.columns(4)
+            for _col, _icon, _val, _lbl in [
+                (_pp1, "📊", str(len(_tbl_r)),    "Tables Extracted"),
+                (_pp2, "📝", str(len(_txt_r)),    "Text Pages"),
+                (_pp3, "❌", str(len(_empty_pg)), "Empty Pages"),
+                (_pp4, "📄", str(len(_results)),  "Pages Scanned"),
             ]:
-                col_ui.markdown(_card(icon, str(val), lbl), unsafe_allow_html=True)
+                _col.markdown(metric_card(_icon, _val, _lbl), unsafe_allow_html=True)
 
             st.markdown("<br>", unsafe_allow_html=True)
 
-            if not good:
-                _warning(
+            if not _good:
+                warning_box(
                     "⚠️ <strong>No extractable content found.</strong><br>"
-                    "This PDF may be image/scan-based. Consider running OCR first."
+                    "This PDF may be image-based. "
+                    "Consider running OCR software first."
                 )
             else:
-                if empty:
-                    _info(f"ℹ️ {len(empty)} page(s) had no content and were skipped.")
+                if _empty_pg:
+                    info_box(
+                        f"ℹ️ {len(_empty_pg)} page(s) had no extractable "
+                        "content and were skipped."
+                    )
 
-                method_labels = {
-                    "extract_tables()":                      "🟢 Tier 1",
-                    "extract_table()":                       "🟡 Tier 2",
-                    "extract_text() ← plain text fallback":  "🔵 Text",
+                _method_badges = {
+                    "extract_tables()":                     "🟢 Tier 1",
+                    "extract_table()":                      "🟡 Tier 2",
+                    "extract_text() ← plain text fallback": "🔵 Text",
                 }
 
-                for r in good:
-                    badge = method_labels.get(r["method"], r["method"])
+                for _r in _good:
+                    _badge = _method_badges.get(_r["method"], _r["method"])
                     with st.expander(
-                        f"Page {r['page']} · Table 
+                        f"Page {_r['page']} · Table {_r['table_index']} "
+                        f"· {_r['rows']} rows × {_r['cols']} cols · {_badge}",
+                        expanded=(len(_good) <= 4),
+                    ):
+                        st.dataframe(_r["dataframe"], use_container_width=True)
+                        _d1, _d2 = st.columns(2)
+                        _bn      = f"pdf_p{_r['page']}_t{_r['table_index']}"
+                        with _d1:
+                            try:
+                                st.download_button(
+                                    "📥 Excel",
+                                    df_to_excel_bytes(_r["dataframe"]),
+                                    f"{_bn}.xlsx",
+                                    "application/vnd.openxmlformats-officedocument"
+                                    ".spreadsheetml.sheet",
+                                    key=f"pdf_xl_{_chosen_pname}_{_bn}",
+                                    use_container_width=True,
+                                )
+                            except Exception as _dx:
+                                error_box(f"Export error: {_dx}")
+                        with _d2:
+                            try:
+                                st.download_button(
+                                    "📥 CSV",
+                                    df_to_csv_bytes(_r["dataframe"]),
+                                    f"{_bn}.csv",
+                                    "text/csv",
+                                    key=f"pdf_csv_{_chosen_pname}_{_bn}",
+                                    use_container_width=True,
+                                )
+                            except Exception as _dx:
+                                error_box(f"Export error: {_dx}")
+
+                if len(_good) > 1:
+                    section_header("🔗 Combined Export")
+                    try:
+                        _combined = pd.concat(
+                            [
+                                _r["dataframe"].assign(
+                                    _page=_r["page"],
+                                    _table=_r["table_index"],
+                                    _method=_r["method"],
+                                )
+                                for _r in _good
+                            ],
+                            ignore_index=True,
+                        )
+                        st.dataframe(_combined.head(20), use_container_width=True)
+                        _cc1, _cc2 = st.columns(2)
+                        _stem_p    = Path(_chosen_pname).stem
+                        with _cc1:
+                            st.download_button(
+                                "📥 All Tables — Excel",
+                                df_to_excel_bytes(_combined),
+                                f"all_tables_{_stem_p}.xlsx",
+                                "application/vnd.openxmlformats-officedocument"
+                                ".spreadsheetml.sheet",
+                                key=f"comb_xl_{_chosen_pname}",
+                                use_container_width=True,
+                            )
+                        with _cc2:
+                            st.download_button(
+                                "📥 All Tables — CSV",
+                                df_to_csv_bytes(_combined),
+                                f"all_tables_{_stem_p}.csv",
+                                "text/csv",
+                                key=f"comb_csv_{_chosen_pname}",
+                                use_container_width=True,
+                            )
+                    except Exception as _cx:
+                        error_box(f"Combined export error: {_cx}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  TAB 3 — BATCH PROCESS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+if "⚡ Batch Process" in _tab_labels:
+    with _all_tabs[_tab_labels.index("⚡ Batch Process")]:
+        section_header("⚡ Batch Processing")
+
+        _total_f = len(data_files)
+        info_box(
+            f"📂 <strong>{_total_f} data file(s)</strong> "
+            "ready for batch processing."
+        )
+
+        for _bf in data_files:
+            st.markdown(
+                f'<div class="file-badge">📊 {_bf.name} '
+                f'<span style="color:#718096">({_bf.size / 1024:.1f} KB)</span></div>',
+                unsafe_allow_html=True,
+            )
+
+        _batch_btn = st.button(
+            f"🚀 Clean All {_total_f} File(s)",
+            type="primary",
+            use_container_width=True,
+            disabled=(_total_f == 0),
+        )
+
+        if _batch_btn and data_files:
+            _batch_prog = st.progress(0, text="Batch processing…")
+            _batch_results: list[tuple[str, pd.DataFrame, dict]] = []
+            _before_map:    dict[str, pd.DataFrame]               = {}
+            _errors:        list[str]                             = []
+
+            _batch_opts: dict = {
+                "fill_strategy":     sidebar_opts["fill_strategy"],
+                "use_ftfy":          sidebar_opts["use_ftfy"],
+                "remove_empty_cols": sidebar_opts["remove_empty_cols"],
+                "remove_dup_cols":   sidebar_opts["remove_dup_cols"],
+                "remove_const_cols": sidebar_opts["remove_const_cols"],
+                "snake_case":        sidebar_opts["snake_case"],
+                "trim_spaces":       sidebar_opts["trim_spaces"],
+                "remove_empty_rows": sidebar_opts["remove_empty_rows"],
+                # Normalization disabled in batch — requires per-file profiling
+                "normalize_emails":  False,
+                "normalize_phones":  False,
+                "normalize_dates":   False,
+            }
+
+            for _i, _bf in enumerate(data_files):
+                _batch_prog.progress(
+                    (_i + 1) / _total_f,
+                    text=f"Cleaning {_bf.name} ({_i + 1}/{_total_f})…",
+                )
+                _fok, _ferr = validate_uploaded_file(_bf)
+                if not _fok:
+                    _errors.append(f"{_bf.name}: {_ferr}")
+                    continue
+                try:
+                    _fbytes = _get_file_bytes(_bf)
+                    _df_b   = load_dataframe(_fbytes, _bf.name)
+
+                    if _df_b is None or _df_b.empty:
+                        _errors.append(f"{_bf.name}: could not load file")
+                        continue
+
+                    _before_map[_bf.name] = _df_b.copy()
+                    _df_bc, _rep_b        = run_cleaning_pipeline(_df_b, _batch_opts)
+                    _rep_b["filename"]    = _bf.name
+                    _batch_results.append((_bf.name, _df_bc, _rep_b))
+
+                except Exception as _bex:
+                    _errors.append(f"{_bf.name}: {_bex}")
+
+            _batch_prog.empty()
+
+            for _e in _errors:
+                warning_box(f"⚠️ {_e}")
+
+            if _batch_results:
+                st.session_state["batch_results"] = _batch_results
+                st.session_state["batch_before"]  = _before_map
+                success_box(
+                    f"✅ Batch complete! "
+                    f"{len(_batch_results)}/{_total_f} file(s) cleaned."
+                )
+
+        if "batch_results" in st.session_state:
+            _br = st.session_state["batch_results"]
+            _bm = st.session_state.get("batch_before", {})
+
+            # Summary table
+            _summary = []
+            for _fn, _dbc, _rb in _br:
+                _summary.append({
+                    "File":          _fn,
+                    "Rows (before)": _rb["rows_before"],
+                    "Rows (after)":  _rb["rows_after"],
+                    "Dupes removed": _rb["duplicates_removed"],
+                    "Nulls filled":  _rb["missing_filled"],
+                    "Cols removed":  (
+                        _rb["empty_cols_removed"] + _rb["dup_cols_removed"]
+                    ),
+                })
+            st.dataframe(pd.DataFrame(_summary), use_container_width=True)
+
+            section_header("📦 Download All Results")
+            try:
+                _zip_bytes = build_batch_zip(
+                    _br,
+                    build_text_report,
+                    before_map=_bm,
+                )
+                st.download_button(
+                    "📦 Download All as ZIP",
+                    data=_zip_bytes,
+                    file_name="datacleaner_pro_batch.zip",
+                    mime="application/zip",
+                    use_container_width=True,
+                    type="primary",
+                )
+                info_box(
+                    "📦 ZIP contains:<br>"
+                    "• <code>cleaned_*.xlsx</code> and "
+                    "<code>cleaned_*.csv</code> for each file<br>"
+                    "• <code>reports/report_*.txt</code> for each file"
+                )
+            except Exception as _zex:
+                error_box(f"ZIP creation error: {_zex}")
+
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            for _fn, _dbc, _rb in _br:
+                _base_b    = Path(_fn).stem
+                _df_before = _bm.get(_fn)
+                with st.expander(
+                    f"📄 {_fn} — {_rb['rows_after']:,} rows",
+                    expanded=False,
+                ):
+                    st.dataframe(_dbc.head(5), use_container_width=True)
+                    _bc1, _bc2, _bc3 = st.columns(3)
+                    with _bc1:
+                        st.download_button(
+                            "📥 Excel",
+                            df_to_excel_bytes(_dbc),
+                            f"cleaned_{_base_b}.xlsx",
+                            "application/vnd.openxmlformats-officedocument"
+                            ".spreadsheetml.sheet",
+                            key=f"b_xl_{_fn}",
+                            use_container_width=True,
+                        )
+                    with _bc2:
+                        st.download_button(
+                            "📥 CSV",
+                            df_to_csv_bytes(_dbc),
+                            f"cleaned_{_base_b}.csv",
+                            "text/csv",
+                            key=f"b_csv_{_fn}",
+                            use_container_width=True,
+                        )
+                    with _bc3:
+                        try:
+                            _rt = build_text_report(_rb, _fn, _df_before, _dbc)
+                        except Exception:
+                            _rt = build_text_report(_rb, _fn)
+                        st.download_button(
+                            "📋 Report",
+                            _rt.encode("utf-8"),
+                            f"report_{_base_b}.txt",
+                            "text/plain",
+                            key=f"b_rpt_{_fn}",
+                            use_container_width=True,
+                        )
