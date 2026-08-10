@@ -20,6 +20,16 @@ import pdfplumber
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# CONSTANTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Maximum number of pages processed when page_selection == "all".
+# This limit does NOT apply to specific-page selection, where the user
+# has already explicitly bounded the range.
+MAX_PDF_PAGES = 100
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # TABLE CONVERSION
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -138,9 +148,14 @@ def extract_pdf_tables(
 
         page_selection:
             Either "all" or "specific".
+            When "all", processing is limited to MAX_PDF_PAGES pages.
+            When the PDF exceeds this limit, extraction is rejected and
+            a single result dict with method "page_limit_exceeded" is
+            returned so the caller can display a clear message.
 
         specific_pages:
             1-based page numbers when page_selection == "specific".
+            This path is NOT subject to the MAX_PDF_PAGES limit.
 
         progress_cb:
             Optional callback:
@@ -149,6 +164,7 @@ def extract_pdf_tables(
     Returns:
         List of result dictionaries:
 
+        Normal result:
         {
             "page": int,
             "table_index": int | None,
@@ -156,6 +172,19 @@ def extract_pdf_tables(
             "dataframe": pd.DataFrame | None,
             "rows": int,
             "cols": int,
+        }
+
+        Page-limit rejection (method == "page_limit_exceeded"):
+        {
+            "page": None,
+            "table_index": None,
+            "method": "page_limit_exceeded",
+            "dataframe": None,
+            "rows": 0,
+            "cols": 0,
+            "total_pages": int,
+            "max_pages": int,
+            "filename": str,
         }
 
     Notes:
@@ -185,6 +214,8 @@ def extract_pdf_tables(
             # ── Determine pages to process ───────────────────────────────────
             if page_selection == "specific":
 
+                # Specific-page path: NOT subject to MAX_PDF_PAGES.
+                # Existing bounds validation is preserved exactly.
                 requested_pages = specific_pages or []
 
                 pages_idx = [
@@ -201,6 +232,26 @@ def extract_pdf_tables(
                     return results
 
             else:
+                # "all" pages mode — enforce MAX_PDF_PAGES.
+                if total_pages > MAX_PDF_PAGES:
+                    # Reject cleanly. Return a structured result that the
+                    # caller can inspect to display a specific message.
+                    # Do NOT process any pages.
+                    results.append(
+                        {
+                            "page":        None,
+                            "table_index": None,
+                            "method":      "page_limit_exceeded",
+                            "dataframe":   None,
+                            "rows":        0,
+                            "cols":        0,
+                            "total_pages": total_pages,
+                            "max_pages":   MAX_PDF_PAGES,
+                            "filename":    str(filename),
+                        }
+                    )
+                    return results
+
                 pages_idx = list(range(total_pages))
 
             total = len(pages_idx)
@@ -243,12 +294,12 @@ def extract_pdf_tables(
 
                     results.append(
                         {
-                            "page": page_num + 1,
+                            "page":        page_num + 1,
                             "table_index": table_index,
-                            "method": "extract_tables()",
-                            "dataframe": df_table,
-                            "rows": len(df_table),
-                            "cols": len(df_table.columns),
+                            "method":      "extract_tables()",
+                            "dataframe":   df_table,
+                            "rows":        len(df_table),
+                            "cols":        len(df_table.columns),
                         }
                     )
 
@@ -271,12 +322,12 @@ def extract_pdf_tables(
                     if df_table is not None and not df_table.empty:
                         results.append(
                             {
-                                "page": page_num + 1,
+                                "page":        page_num + 1,
                                 "table_index": 1,
-                                "method": "extract_table()",
-                                "dataframe": df_table,
-                                "rows": len(df_table),
-                                "cols": len(df_table.columns),
+                                "method":      "extract_table()",
+                                "dataframe":   df_table,
+                                "rows":        len(df_table),
+                                "cols":        len(df_table.columns),
                             }
                         )
                         continue
@@ -303,15 +354,15 @@ def extract_pdf_tables(
 
                     results.append(
                         {
-                            "page": page_num + 1,
+                            "page":        page_num + 1,
                             "table_index": 1,
-                            "method": (
+                            "method":      (
                                 "extract_text() "
                                 "← plain text fallback"
                             ),
-                            "dataframe": df_text,
-                            "rows": len(df_text),
-                            "cols": 1,
+                            "dataframe":   df_text,
+                            "rows":        len(df_text),
+                            "cols":        1,
                         }
                     )
 
@@ -325,14 +376,14 @@ def extract_pdf_tables(
         # Return structured error information to the caller.
         results.append(
             {
-                "page": None,
+                "page":        None,
                 "table_index": None,
-                "method": "error",
-                "dataframe": None,
-                "rows": 0,
-                "cols": 0,
-                "error": str(exc),
-                "filename": str(filename),
+                "method":      "error",
+                "dataframe":   None,
+                "rows":        0,
+                "cols":        0,
+                "error":       str(exc),
+                "filename":    str(filename),
             }
         )
 
@@ -346,10 +397,10 @@ def extract_pdf_tables(
 def _empty_result(page_num: int) -> dict:
     """Return a standardized empty-page result."""
     return {
-        "page": page_num,
+        "page":        page_num,
         "table_index": None,
-        "method": "none",
-        "dataframe": None,
-        "rows": 0,
-        "cols": 0,
+        "method":      "none",
+        "dataframe":   None,
+        "rows":        0,
+        "cols":        0,
     }
