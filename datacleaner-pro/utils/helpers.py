@@ -18,9 +18,10 @@ import streamlit as st
 # CONSTANTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-MAX_FILE_SIZE_MB = 50
-MAX_ROWS_FUZZY = 50_000
-MAX_ROWS_PROFILING = 500_000
+MAX_FILE_SIZE_MB   = 50
+MAX_ROWS           = 500_000   # Hard row limit enforced at load time.
+MAX_ROWS_FUZZY     = 50_000    # Fuzzy duplicate detection cap.
+MAX_ROWS_PROFILING = MAX_ROWS  # Alias kept for reference.
 
 SUPPORTED_EXTENSIONS = {".csv", ".xlsx", ".xls", ".pdf"}
 
@@ -36,34 +37,57 @@ DATA_STATE_KEYS = {
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# EXCEPTIONS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class RowLimitExceeded(ValueError):
+    """
+    Raised by load_dataframe() when the parsed DataFrame exceeds MAX_ROWS.
+
+    Attributes:
+        row_count : Actual number of rows found in the file.
+        max_rows  : The enforced limit (MAX_ROWS).
+        filename  : Original filename for display purposes.
+    """
+
+    def __init__(
+        self,
+        row_count: int,
+        max_rows: int,
+        filename: str = "",
+    ) -> None:
+        self.row_count = row_count
+        self.max_rows  = max_rows
+        self.filename  = filename
+        super().__init__(
+            f"File '{filename}' contains {row_count:,} rows, which exceeds "
+            f"the maximum supported size of {max_rows:,} rows."
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # STRING UTILITIES
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def to_snake_case(name: str) -> str:
     """Convert a column/header name to normalized snake_case."""
     name = str(name).strip()
-
     name = re.sub(r"[\s\-]+", "_", name)
     name = re.sub(r"[^\w]", "_", name)
     name = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name)
     name = re.sub(r"_+", "_", name)
-
     return name.lower().strip("_")
 
 
 def human_readable_size(num_bytes: int) -> str:
     """Return a human-readable byte size."""
     num_bytes = max(0, int(num_bytes))
-
     if num_bytes < 1_024:
         return f"{num_bytes} B"
-
     if num_bytes < 1_024 ** 2:
         return f"{num_bytes / 1_024:.1f} KB"
-
     if num_bytes < 1_024 ** 3:
         return f"{num_bytes / 1_024 ** 2:.2f} MB"
-
     return f"{num_bytes / 1_024 ** 3:.2f} GB"
 
 
@@ -71,10 +95,7 @@ def get_df_memory(df: pd.DataFrame) -> str:
     """Return human-readable DataFrame memory usage."""
     if df is None:
         return "0 B"
-
-    return human_readable_size(
-        int(df.memory_usage(deep=True).sum())
-    )
+    return human_readable_size(int(df.memory_usage(deep=True).sum()))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -92,12 +113,10 @@ def validate_uploaded_file(uploaded_file) -> tuple[bool, str]:
         return False, "No file provided."
 
     filename = str(getattr(uploaded_file, "name", "")).strip()
-
     if not filename:
         return False, "Uploaded file has no filename."
 
     ext = Path(filename).suffix.lower()
-
     if ext not in SUPPORTED_EXTENSIONS:
         supported = ", ".join(sorted(SUPPORTED_EXTENSIONS))
         return False, (
@@ -114,10 +133,8 @@ def validate_uploaded_file(uploaded_file) -> tuple[bool, str]:
         return False, "Invalid file size."
 
     max_bytes = MAX_FILE_SIZE_MB * 1_024 * 1_024
-
     if size_bytes > max_bytes:
         size_mb = size_bytes / 1_024 / 1_024
-
         return False, (
             f"File **{filename}** is {size_mb:.1f} MB. "
             f"Maximum allowed: {MAX_FILE_SIZE_MB} MB."
@@ -161,18 +178,14 @@ def file_signature(files: list) -> str:
 
             while True:
                 chunk = file.read(1024 * 1024)
-
                 if not chunk:
                     break
-
                 hasher.update(chunk)
 
             digest = hasher.hexdigest()[:16]
-
             file.seek(current_pos)
 
         except Exception:
-            # Signature still remains deterministic if hashing is unavailable.
             digest = f"{size}"
 
         parts.append(f"{name}_{size}_{digest}")
@@ -230,7 +243,6 @@ def get_excel_sheet_names(
 
     try:
         buffer = io.BytesIO(file_bytes)
-
         engine = "openpyxl" if ext == ".xlsx" else "xlrd"
 
         with pd.ExcelFile(buffer, engine=engine) as excel:
@@ -254,12 +266,18 @@ def load_dataframe(
     Load CSV or Excel data from raw bytes.
 
     Args:
-        file_bytes: Raw uploaded file bytes.
-        filename: Original filename.
-        sheet_name: Optional Excel worksheet name.
+        file_bytes:  Raw uploaded file bytes.
+        filename:    Original filename used to determine the parser.
+        sheet_name:  Optional Excel worksheet name.
 
     Returns:
-        DataFrame or None if loading fails.
+        DataFrame on success, or None if the file cannot be parsed.
+
+    Raises:
+        RowLimitExceeded:
+            When the parsed DataFrame contains more than MAX_ROWS rows.
+            Raised instead of returning None so callers can display a
+            specific error message rather than a generic load failure.
     """
     if not isinstance(file_bytes, (bytes, bytearray)):
         return None
@@ -274,78 +292,69 @@ def load_dataframe(
 
     buffer = io.BytesIO(file_bytes)
 
+    def _check_row_limit(df: pd.DataFrame) -> pd.DataFrame:
+        if len(df) > MAX_ROWS:
+            raise RowLimitExceeded(len(df), MAX_ROWS, filename)
+        return df
+
     try:
         # ── CSV ───────────────────────────────────────────────────────────────
         if ext == ".csv":
-            encodings = [
-                "utf-8-sig",
-                "utf-8",
-                "cp1252",
-                "latin-1",
-            ]
-
+            encodings = ["utf-8-sig", "utf-8", "cp1252", "latin-1"]
             last_error: Exception | None = None
 
             for encoding in encodings:
                 try:
                     buffer.seek(0)
-
                     df = pd.read_csv(
                         buffer,
                         encoding=encoding,
                         low_memory=False,
                     )
-
                     if df.empty:
                         return None
+                    return _check_row_limit(df)
 
-                    return df
+                except RowLimitExceeded:
+                    raise
 
-                except (
-                    UnicodeDecodeError,
-                    pd.errors.ParserError,
-                ) as exc:
+                except (UnicodeDecodeError, pd.errors.ParserError) as exc:
                     last_error = exc
                     continue
 
             # Final tolerant fallback.
             try:
                 buffer.seek(0)
-
                 df = pd.read_csv(
                     buffer,
                     encoding="latin-1",
                     encoding_errors="replace",
                     low_memory=False,
                 )
+                if df.empty:
+                    return None
+                return _check_row_limit(df)
 
-                return df if not df.empty else None
+            except RowLimitExceeded:
+                raise
 
             except Exception:
                 return None
 
         # ── Excel ─────────────────────────────────────────────────────────────
         engine = "openpyxl" if ext == ".xlsx" else "xlrd"
-
         buffer.seek(0)
-
-        df = pd.read_excel(
-            buffer,
-            engine=engine,
-            sheet_name=sheet_name,
-        )
+        df = pd.read_excel(buffer, engine=engine, sheet_name=sheet_name)
 
         if df.empty:
             return None
 
-        return df
+        return _check_row_limit(df)
 
-    except (
-        ValueError,
-        OSError,
-        ImportError,
-        pd.errors.ParserError,
-    ):
+    except RowLimitExceeded:
+        raise
+
+    except (ValueError, OSError, ImportError, pd.errors.ParserError):
         return None
 
     except Exception:
