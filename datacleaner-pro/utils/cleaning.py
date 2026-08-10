@@ -73,6 +73,10 @@ def _count_changed_values(
     return count
 
 
+# Alias for backward compatibility with test suites importing _count_encoding_repairs
+_count_encoding_repairs = _count_changed_values
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # WHITESPACE
 # ═══════════════════════════════════════════════════════════════════════════════
