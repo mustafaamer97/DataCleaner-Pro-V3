@@ -27,13 +27,8 @@ def _safe_sheet_name(name: str) -> str:
     - Cannot contain: : \\ / ? * [ ]
     """
     name = str(name).strip() or "Cleaned Data"
-
-    # Remove characters forbidden by Excel.
     name = re.sub(r'[:\\/?*\[\]]', "_", name)
-
-    # Excel worksheet names cannot exceed 31 characters.
     name = name[:31].strip()
-
     return name or "Cleaned Data"
 
 
@@ -45,13 +40,8 @@ def _safe_filename_stem(name: str) -> str:
     from leaking into archive paths.
     """
     stem = Path(str(name)).stem
-
-    # Replace unsafe characters with underscores.
     stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", stem)
-
-    # Collapse repeated underscores.
     stem = re.sub(r"_+", "_", stem).strip(" ._")
-
     return stem or "data"
 
 
@@ -110,6 +100,7 @@ def df_to_csv_bytes(df: pd.DataFrame) -> bytes:
 def build_batch_zip(
     results: list[tuple[str, pd.DataFrame, dict]],
     report_fn,
+    before_map: dict[str, pd.DataFrame] | None = None,
 ) -> bytes:
     """
     Build a ZIP archive from batch cleaning results.
@@ -120,7 +111,21 @@ def build_batch_zip(
                 (original_filename, cleaned_df, report_dict)
 
         report_fn:
-            Callable(report_dict, filename) -> str
+            Callable that accepts at minimum (report_dict, filename).
+            When before_map is supplied and the filename key exists,
+            it is called as:
+                report_fn(report_dict, filename, df_before, df_after)
+            When before_map is None or the key is missing, it is called as:
+                report_fn(report_dict, filename, None, df_after)
+            if before_map is not None (key absent), or:
+                report_fn(report_dict, filename)
+            if before_map is None entirely.
+
+        before_map:
+            Optional dict mapping original_filename -> before-DataFrame.
+            When provided, before/after DataFrames are passed to report_fn.
+            When None, report_fn receives only report_dict and filename,
+            preserving the original two-argument behavior exactly.
 
     Returns:
         Raw ZIP bytes.
@@ -130,6 +135,9 @@ def build_batch_zip(
 
     if not callable(report_fn):
         raise TypeError("report_fn must be callable.")
+
+    if before_map is not None and not isinstance(before_map, dict):
+        raise TypeError("before_map must be a dict or None.")
 
     buf = io.BytesIO()
 
@@ -174,10 +182,23 @@ def build_batch_zip(
             )
 
             # ── Text Report ──────────────────────────────────────────────────
-            report_text = report_fn(
-                report,
-                original_name,
-            )
+            if before_map is not None:
+                # Always call with 4 args when before_map is supplied.
+                # df_before will be None when the key is absent — report_fn
+                # (build_text_report) handles None gracefully via its default.
+                df_before = before_map.get(original_name)
+                report_text = report_fn(
+                    report,
+                    original_name,
+                    df_before,
+                    df_clean,
+                )
+            else:
+                # Original two-argument behavior — preserved exactly.
+                report_text = report_fn(
+                    report,
+                    original_name,
+                )
 
             if not isinstance(report_text, str):
                 report_text = str(report_text)
