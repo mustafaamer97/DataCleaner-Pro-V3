@@ -277,6 +277,14 @@ def load_dataframe(
             When the parsed DataFrame contains more than MAX_ROWS rows.
             Raised instead of returning None so callers can display a
             specific error message rather than a generic load failure.
+
+    Note:
+        The @st.cache_data decorator has been intentionally removed from
+        this function because cached functions cannot raise exceptions that
+        propagate correctly to callers in all Streamlit versions, and
+        because RowLimitExceeded must always reach the caller uninhibited.
+        Callers that previously relied on caching should cache the bytes
+        themselves (as app.py already does via _get_file_bytes).
     """
     if not isinstance(file_bytes, (bytes, bytearray)):
         return None
@@ -289,9 +297,8 @@ def load_dataframe(
     if not file_bytes:
         return None
 
-    buffer = io.BytesIO(file_bytes)
-
     def _check_row_limit(df: pd.DataFrame) -> pd.DataFrame:
+        """Raise RowLimitExceeded if df exceeds MAX_ROWS."""
         if len(df) > MAX_ROWS:
             raise RowLimitExceeded(len(df), MAX_ROWS, filename)
         return df
@@ -304,9 +311,9 @@ def load_dataframe(
 
             for encoding in encodings:
                 try:
-                    buffer.seek(0)
+                    buf = io.BytesIO(file_bytes)
                     df = pd.read_csv(
-                        buffer,
+                        buf,
                         encoding=encoding,
                         low_memory=False,
                     )
@@ -323,9 +330,9 @@ def load_dataframe(
 
             # Final tolerant fallback.
             try:
-                buffer.seek(0)
+                buf = io.BytesIO(file_bytes)
                 df = pd.read_csv(
-                    buffer,
+                    buf,
                     encoding="latin-1",
                     encoding_errors="replace",
                     low_memory=False,
@@ -340,33 +347,46 @@ def load_dataframe(
             except Exception:
                 return None
 
-        # ── Excel ─────────────────────────────────────────────────────────────
+        # ── Excel (.xlsx / .xls) ──────────────────────────────────────────────
+        # Attempt 1: explicit engine matching the file extension.
         engine = "openpyxl" if ext == ".xlsx" else "xlrd"
 
+        df = None
+        last_excel_error: Exception | None = None
+
         try:
-            buffer.seek(0)
+            buf = io.BytesIO(file_bytes)
             df = pd.read_excel(
-                buffer,
+                buf,
                 engine=engine,
                 sheet_name=sheet_name,
             )
-        except Exception:
-            # Try without specifying engine as a fallback.
+        except RowLimitExceeded:
+            raise
+        except Exception as exc:
+            last_excel_error = exc
+
+        # Attempt 2: let pandas choose the engine (covers edge cases where
+        # the file extension does not match the actual format).
+        if df is None:
             try:
-                buffer.seek(0)
+                buf = io.BytesIO(file_bytes)
                 df = pd.read_excel(
-                    buffer,
+                    buf,
                     sheet_name=sheet_name,
                 )
+            except RowLimitExceeded:
+                raise
             except Exception:
                 return None
 
-        if df.empty:
+        if df is None or df.empty:
             return None
 
         return _check_row_limit(df)
 
     except RowLimitExceeded:
+        # Never swallow — must always propagate to the caller.
         raise
 
     except (ValueError, OSError, ImportError, pd.errors.ParserError):
