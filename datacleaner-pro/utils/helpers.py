@@ -256,7 +256,6 @@ def get_excel_sheet_names(
 # DATAFRAME LOADER
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@st.cache_data(show_spinner=False)
 def load_dataframe(
     file_bytes: bytes,
     filename: str,
@@ -343,8 +342,24 @@ def load_dataframe(
 
         # ── Excel ─────────────────────────────────────────────────────────────
         engine = "openpyxl" if ext == ".xlsx" else "xlrd"
-        buffer.seek(0)
-        df = pd.read_excel(buffer, engine=engine, sheet_name=sheet_name)
+
+        try:
+            buffer.seek(0)
+            df = pd.read_excel(
+                buffer,
+                engine=engine,
+                sheet_name=sheet_name,
+            )
+        except Exception:
+            # Try without specifying engine as a fallback.
+            try:
+                buffer.seek(0)
+                df = pd.read_excel(
+                    buffer,
+                    sheet_name=sheet_name,
+                )
+            except Exception:
+                return None
 
         if df.empty:
             return None
